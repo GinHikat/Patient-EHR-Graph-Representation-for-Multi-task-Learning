@@ -1,0 +1,7 @@
+pandas 
+numpy
+matplotlib
+seaborn
+neo4j
+fastapi
+python-dotenv
