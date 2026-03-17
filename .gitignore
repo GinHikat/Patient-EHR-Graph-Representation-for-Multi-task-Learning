@@ -1,0 +1,11 @@
+data/
+
+.env
+
+secrets/
+
+*.md
+
+__pycache__/
+
+*.pyc
