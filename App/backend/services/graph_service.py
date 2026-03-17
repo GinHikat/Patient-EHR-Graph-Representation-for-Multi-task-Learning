@@ -1,4 +1,5 @@
 from core.database import get_db_driver
+from core.config import settings
 
 def get_graph_data(limit: int, node_type: str = None, namespace: str = "Test"):
     driver = get_db_driver()
@@ -60,5 +61,5 @@ def get_node_types_data():
     query = "CALL db.labels()"
     with driver.session() as session:
         result = session.run(query)
-        labels = [record["label"] for record in result]
+        labels = [record["label"] for record in result if record["label"] != "Test"]
         return labels

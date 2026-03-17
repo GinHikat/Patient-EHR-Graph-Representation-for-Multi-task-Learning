@@ -174,8 +174,8 @@ const GraphViewer = () => {
             type="range"
             className="custom-slider"
             min="10"
-            max="1000"
-            step="10"
+            max="2000"
+            step="50"
             value={nodeLimit}
             onChange={(e) => setNodeLimit(parseInt(e.target.value))}
           />
@@ -186,10 +186,10 @@ const GraphViewer = () => {
           <label
             style={{ fontSize: "0.75rem", marginBottom: "8px", opacity: 0.8 }}
           >
-            Visible Types
+            All Types
           </label>
-          {Array.from(new Set(graphData.nodes.flatMap((n) => n.labels)))
-            .slice(0, 10)
+          {nodeTypes
+            .filter((type) => type !== "All" && type !== "Test")
             .map((label) => (
               <div key={label} className="legend-item">
                 <div
@@ -207,7 +207,7 @@ const GraphViewer = () => {
         graphData={graphData}
         nodeLabel={(node) => `
           <div style="background: rgba(0,0,0,0.8); padding: 8px; border-radius: 4px; font-family: Inter, sans-serif;">
-             <div style="color: #60a5fa; font-size: 10px; margin-bottom: 2px;">${node.labels?.[0] || "Unknown"}</div>
+             <div style="color: #60a5fa; font-size: 10px; margin-bottom: 2px;">${node.labels?.filter((l) => l !== "Test")[0] || "Node"}</div>
              <div style="font-weight: bold; color: white;">${node.properties?.name || node.properties?.title || node.id}</div>
           </div>
         `}
@@ -270,15 +270,26 @@ const GraphViewer = () => {
                   "Node Info"}
               </h2>
               <div className="node-labels">
-                {selectedNode.labels?.map((label, idx) => (
+                {selectedNode.labels
+                  ?.filter((l) => l !== "Test")
+                  .map((label, idx) => (
+                    <span
+                      key={idx}
+                      className="node-label"
+                      style={{ borderLeft: `3px solid ${getColor(label)}` }}
+                    >
+                      {label}
+                    </span>
+                  ))}
+                {selectedNode.labels?.filter((l) => l !== "Test").length ===
+                  0 && (
                   <span
-                    key={idx}
                     className="node-label"
-                    style={{ borderLeft: `3px solid ${getColor(label)}` }}
+                    style={{ borderLeft: "3px solid #ccc" }}
                   >
-                    {label}
+                    Node
                   </span>
-                ))}
+                )}
               </div>
             </div>
             <button className="close-btn" onClick={resetSelection}>
