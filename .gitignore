@@ -4,8 +4,8 @@ data/
 
 secrets/
 
-*.md
-
 __pycache__/
 
 *.pyc
+
+plan/
