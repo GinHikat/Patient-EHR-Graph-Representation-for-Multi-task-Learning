@@ -1,20 +1,40 @@
-# Neo4j Graph Explorer
+# Patient EHR Graph Representation for Multi-task Learning
 
-A full-stack application for visualizing and exploring Neo4j graph databases. The system retrieves nodes, relationships, and metadata from Neo4j and renders them in an interactive 2D graph format using React Force Graph.
+A research project that constructs a structured **Knowledge Graph** from patient Electronic Health Records (EHR) and medical ontologies, and exposes it through a full-stack web application for interactive graph exploration.
+
+---
+
+## 📁 Folder Structure
+
+```
+.
+├── App/
+│   ├── backend/                  # FastAPI backend
+│   └── frontend/                 # React + Vite frontend
+├── modules/
+│   ├── dataset_preprocessing/    # Raw data cleaning scripts
+│   └── graph_construction/       # Neo4j graph ingestion scripts
+├── notebooks/                    # Jupyter exploration notebooks
+├── shared_functions/             # Shared utilities (Google Sheets, helpers)
+├── secrets/                      # Credentials (gitignored)
+├── .env.example                  # Environment variable template
+├── .gitignore
+└── requirements.txt
+```
+
+---
 
 ## 🏗️ System Architecture
 
-The application is built with a modern stack separated into a frontend client and backend API.
-
 ```mermaid
 graph TD;
-    subgraph Frontend [React Frontend - Port 5173]
+    subgraph Frontend ["React Frontend — Port 5173"]
         UI[React UI]
         GraphLib[React Force Graph 2D]
         UI --> GraphLib
     end
 
-    subgraph Backend [FastAPI Backend - Port 8000]
+    subgraph Backend ["FastAPI Backend — Port 8000"]
         Router[API Routes]
         Service[Graph Services]
         Validator[Pydantic Schemas]
@@ -23,105 +43,128 @@ graph TD;
         Router --> Validator
         Service --> DBConfig
     end
-  
+
     subgraph Database
         Neo4j[(Neo4j Instance)]
     end
 
-    UI -- HTTP GET requests --> Router
+    subgraph Modules
+        Preprocess[dataset_preprocessing]
+        GraphBuild[graph_construction]
+        Preprocess --> GraphBuild
+        GraphBuild --> Neo4j
+    end
+
+    UI -- HTTP requests --> Router
     DBConfig -- Bolt Protocol --> Neo4j
 ```
 
-### Components Summary:
+### Components Summary
 
-* **Frontend**: Built using React and Vite. It heavily relies on `react-force-graph-2d` for generating the nodes and relationships. Data is fetched via standard HTTP requests (Axios).
-* **Backend**: Built using FastAPI (Python). It is modularized into endpoints (`api`), business logic (`services`), request/response verification (`schemas`), and database/system config initialization (`core`). Tests use `pytest`.
-* **Database**: Connects to any accessible Neo4j graph instance utilizing standard Neo4j Python drivers reading configuration variables from an environment file.
+| Layer | Technology | Role |
+|---|---|---|
+| **Frontend** | React + Vite + react-force-graph-2d | Interactive graph visualization |
+| **Backend** | FastAPI + Python | REST API, graph query logic |
+| **Database** | Neo4j | Graph storage & traversal |
+| **Modules** | Python scripts | Dataset preprocessing & graph ingestion |
+| **Shared** | Python utilities | Google Sheets/Drive integration, helpers |
 
 ---
 
-## 🚀 How to Run the System
+## 🚀 Getting Started
 
-### 1. Prerequisites
+### 1. Clone the Repository
 
-Ensure you have the following installed:
-
-* [Node.js](https://nodejs.org/) (v16.x or newer) and `npm`
-* [Python](https://www.python.org/downloads/) (3.10 or newer)
-* A running **Neo4j database instance** (local Desktop, Docker, or Aura).
-
-### 2. Configure Environment variables
-
-Navigate to the root directory `d:\Study\Education\Projects\Thesis` (or adjacent to where `App/` exists) and ensure there is a `.env` file containing the connection string and credentials for your database:
-
-```ini
-NEO4J_URI=bolt://localhost:7687  # or neo4j+s://... for aura
-NEO4J_USERNAME=neo4j
-NEO4J_AUTH=your_password
+```bash
+git clone https://github.com/GinHikat/Patient-EHR-Graph-Representation-for-Multi-task-Learning.git
+cd Patient-EHR-Graph-Representation-for-Multi-task-Learning
 ```
 
----
+### 2. Set Up Environment Variables
 
-### 3. Running the Backend Server
+Copy the example env file and fill in your credentials:
 
-The backend requires Fast API, Uvicorn, and Neo4j drivers. It dynamically utilizes your `.env` configuration.
+```bash
+cp .env.example .env
+```
 
-1. Open a terminal and navigate to the backend directory:
-   ```bash
-   cd App/backend
-   ```
-2. Install the necessary Python packages (preferably inside a virtual environment):
-   ```bash
-   pip install -r requirement.txt
-   ```
-3. Start the FastAPI server using Python:
-   ```bash
-   python main.py
-   ```
+Then edit `.env` with your actual values:
 
-   *The backend will now be actively listening to requests on `http://localhost:8000`*
+```ini
+# Google API
+GOOGLE_API_CREDS=secrets/ggsheet_credentials.json
+GOOGLE_SHEET_ID=your_sheet_id
+GOOGLE_DRIVE_ID=your_drive_id
 
----
+# LLM Keys
+OPENAI_API_KEY=your_openai_key
+GOOGLE_API_KEY=your_google_ai_key
 
-### 4. Running the Frontend Application
+# Neo4j
+NEO4J_URI=bolt://localhost:7687
+NEO4J_USERNAME=neo4j
+NEO4J_AUTH=your_password
+NEO4J_DATABASE=neo4j
 
-The frontend uses Vite as the build tool and development server.
+# HuggingFace
+HUGGINGFACE_API_KEY=your_hf_key
+```
 
-1. Open a new terminal and navigate to the frontend directory:
-   ```bash
-   cd App/frontend
-   ```
-2. Install the required Node dependencies:
-   ```bash
-   npm install
-   ```
-3. Start the Vite development server:
-   ```bash
-   npm run dev
-   ```
+### 3. Install Python Dependencies
 
-   *The frontend will typically be accessible via a browser at `http://localhost:5173`*
+> **Recommended:** Use [`uv`](https://github.com/astral-sh/uv) for fast dependency management.
+
+```bash
+# Install uv (if not already installed)
+pip install uv
+
+# Install all dependencies
+uv pip install -r requirements.txt
+```
+
+Or using standard pip:
+
+```bash
+pip install -r requirements.txt
+```
+
+### 4. Run the Backend
+
+```bash
+cd App/backend
+python main.py
+```
+
+The API will be available at `http://localhost:8000`. Interactive docs at `http://localhost:8000/docs`.
+
+### 5. Run the Frontend
+
+```bash
+cd App/frontend
+npm install
+npm run dev
+```
+
+The app will be available at `http://localhost:5173`.
 
 ---
 
 ## 🧪 Testing the Backend
 
-You can easily execute Unit, Ablation, and System testing suites utilizing `pytest`. These are constructed using standard Python mocking objects to secure tests during active data modification processes.
+Run the full test suite (Unit, Ablation, and System tests) with `pytest`:
 
-1. Verify you are inside the backend directory.
+```bash
+cd App/backend
+python -m pytest test
+```
 
-   ```bash
-   cd App/backend
-   ```
-2. Run pytest targeting the test directory:
+---
 
-   ```bash
-   python -m pytest test
-   ```
+## 📋 Prerequisites
 
-   or simply
-   ```bash
-   pytest
-   ```
-
-You will see the output detailing `test_graph_service.py` (Unit), `test_ablation.py` (Ablation), and `test_api.py` (System) successfully executed.
+| Requirement | Version |
+|---|---|
+| Python | 3.10+ |
+| Node.js + npm | v16+ |
+| Neo4j | Any accessible instance (local, Docker, or Aura) |
+| uv *(optional)* | Latest |
