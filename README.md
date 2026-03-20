@@ -63,8 +63,8 @@ graph TD;
 
 | Layer | Technology | Role |
 |---|---|---|
-| **Frontend** | React + Vite + react-force-graph-2d | Interactive graph visualization |
-| **Backend** | FastAPI + Python | REST API, graph query logic |
+| **Frontend** | React + Vite + Vercel | Interactive graph visualization |
+| **Backend** | FastAPI + Render | REST API, graph query logic |
 | **Database** | Neo4j | Graph storage & traversal |
 | **Modules** | Python scripts | Dataset preprocessing & graph ingestion |
 | **Shared** | Python utilities | Google Sheets/Drive integration, helpers |
