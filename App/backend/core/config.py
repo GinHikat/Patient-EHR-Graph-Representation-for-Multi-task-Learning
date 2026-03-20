@@ -1,7 +1,7 @@
 import os
 from dotenv import load_dotenv
 
-load_dotenv(r"d:\Study\Education\Projects\Thesis\.env")
+load_dotenv()
 
 class Settings:
     NEO4J_URI: str = os.getenv("NEO4J_URI", "")

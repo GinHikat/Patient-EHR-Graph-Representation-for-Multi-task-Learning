@@ -4,7 +4,8 @@ import axios from "axios";
 import { Info, Database } from "lucide-react";
 import "./index.css";
 
-const API_BASE_URL = "http://localhost:8000/api";
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL || "http://localhost:8000/api";
 
 function App() {
   const [activeTab, setActiveTab] = useState("graph");
@@ -28,7 +29,7 @@ function App() {
       <header className="app-header glass-panel">
         <div className="header-left">
           <div className="logo">
-            <h1>Neo4j Explorer</h1>
+            <h1>Patient EHR Explorer</h1>
           </div>
           <button
             className={`stats-toggle-btn ${showStats ? "active" : ""}`}
