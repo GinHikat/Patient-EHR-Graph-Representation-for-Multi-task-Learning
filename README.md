@@ -147,6 +147,8 @@ npm run dev
 
 The app will be available at `http://localhost:5173`.
 
+Or just simply open the Web on `https://patient-ehr-graph.vercel.app/`. However, due to Free tier Render, the App may need an amount of time for Cold start 🦫
+
 ---
 
 ## 🧪 Testing the Backend
