@@ -17,3 +17,7 @@ class GraphResponse(BaseModel):
 
 class NodeTypesResponse(BaseModel):
     node_types: List[str]
+
+class StatsResponse(BaseModel):
+    total_nodes: int
+    total_edges: int

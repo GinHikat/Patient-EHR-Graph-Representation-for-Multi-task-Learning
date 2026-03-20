@@ -18,13 +18,15 @@ const getColor = (str) => {
 const GraphViewer = () => {
   const [graphData, setGraphData] = useState({ nodes: [], links: [] });
   const [nodeTypes, setNodeTypes] = useState(["All"]);
-  const [selectedType, setSelectedType] = useState("All");
+  const [selectedTypes, setSelectedTypes] = useState(["All"]);
   const [nodeLimit, setNodeLimit] = useState(100);
   const [loading, setLoading] = useState(false);
   const [selectedNode, setSelectedNode] = useState(null);
   const [highlightNodes, setHighlightNodes] = useState(new Set());
   const [highlightLinks, setHighlightLinks] = useState(new Set());
   const [hoverNode, setHoverNode] = useState(null);
+  const [searchId, setSearchId] = useState("");
+  const [searchLoading, setSearchLoading] = useState(false);
 
   const fgRef = useRef();
 
@@ -46,12 +48,12 @@ const GraphViewer = () => {
     const fetchGraph = async () => {
       setLoading(true);
       try {
-        const response = await axios.get(`${API_BASE_URL}/graph`, {
-          params: {
-            limit: nodeLimit,
-            node_type: selectedType === "All" ? "" : selectedType,
-          },
-        });
+        const params = new URLSearchParams();
+        params.append("limit", nodeLimit);
+        if (!selectedTypes.includes("All")) {
+          selectedTypes.forEach((type) => params.append("node_type", type));
+        }
+        const response = await axios.get(`${API_BASE_URL}/graph`, { params });
         setGraphData(response.data);
       } catch (err) {
         console.error("Failed to fetch graph data", err);
@@ -66,7 +68,93 @@ const GraphViewer = () => {
     }, 300);
 
     return () => clearTimeout(timer);
-  }, [nodeLimit, selectedType]);
+  }, [nodeLimit, selectedTypes]);
+
+  const handleSearchNode = async (e) => {
+    e.preventDefault();
+    if (!searchId.trim()) return;
+
+    setSearchLoading(true);
+    try {
+      const response = await axios.get(
+        `${API_BASE_URL}/node/${searchId.trim()}`,
+      );
+      if (response.data && response.data.nodes.length > 0) {
+        const newData = response.data;
+        setGraphData(newData);
+
+        const targetNodeId = searchId.trim().toLowerCase();
+        const firstNode =
+          newData.nodes.find(
+            (n) =>
+              n.id.toLowerCase() === targetNodeId ||
+              n.properties.id?.toString().toLowerCase() === targetNodeId ||
+              n.properties.title?.toLowerCase() === targetNodeId ||
+              n.properties.Title?.toLowerCase() === targetNodeId ||
+              n.properties.name?.toLowerCase() === targetNodeId,
+          ) || newData.nodes[0];
+
+        setSelectedNode(firstNode);
+
+        // Extract highlights from new data
+        const connectedNodes = new Set();
+        const connectedLinks = new Set();
+        connectedNodes.add(firstNode);
+        newData.links.forEach((link) => {
+          if (
+            link.source === firstNode.id ||
+            (link.source && link.source.id === firstNode.id)
+          ) {
+            connectedLinks.add(link);
+            const target = newData.nodes.find(
+              (n) => n.id === (link.target.id || link.target),
+            );
+            if (target) connectedNodes.add(target);
+          }
+          if (
+            link.target === firstNode.id ||
+            (link.target && link.target.id === firstNode.id)
+          ) {
+            connectedLinks.add(link);
+            const source = newData.nodes.find(
+              (n) => n.id === (link.source.id || link.source),
+            );
+            if (source) connectedNodes.add(source);
+          }
+        });
+        setHighlightNodes(connectedNodes);
+        setHighlightLinks(connectedLinks);
+
+        // Centering will happen after simulation starts
+        setTimeout(() => {
+          if (fgRef.current) {
+            fgRef.current.zoomToFit(1000, 100);
+          }
+        }, 500);
+      }
+    } catch (err) {
+      console.error("Failed to find node", err);
+      alert("Node not found");
+    } finally {
+      setSearchLoading(false);
+    }
+  };
+
+  const toggleType = (type) => {
+    if (type === "All") {
+      setSelectedTypes(["All"]);
+    } else {
+      setSelectedTypes((prev) => {
+        const newTypes = prev.filter((t) => t !== "All");
+        if (newTypes.includes(type)) {
+          const updated = newTypes.filter((t) => t !== type);
+          return updated.length === 0 ? ["All"] : updated;
+        } else {
+          return [...newTypes, type];
+        }
+      });
+    }
+  };
 
   const handleNodeClick = useCallback(
     (node) => {
@@ -151,18 +239,40 @@ const GraphViewer = () => {
 
       <div className="controls-panel glass-panel">
         <div className="control-group">
+          <div className="search-pane">
+            <label>Search by ID / Name</label>
+            <form onSubmit={handleSearchNode} className="search-form">
+              <input
+                type="text"
+                className="custom-input"
+                placeholder="Enter ID..."
+                value={searchId}
+                onChange={(e) => setSearchId(e.target.value)}
+              />
+              <button
+                type="submit"
+                className="search-btn"
+                disabled={searchLoading}
+              >
+                {searchLoading ? "..." : "Find"}
+              </button>
+            </form>
+          </div>
+        </div>
+
+        <div className="control-group">
           <label>Filter by Node Type</label>
-          <select
-            className="custom-select"
-            value={selectedType}
-            onChange={(e) => setSelectedType(e.target.value)}
-          >
+          <div className="type-badges">
             {nodeTypes.map((type) => (
-              <option key={type} value={type}>
+              <button
+                key={type}
+                className={`type-badge ${selectedTypes.includes(type) ? "active" : ""}`}
+                onClick={() => toggleType(type)}
+              >
                 {type}
-              </option>
+              </button>
             ))}
-          </select>
+          </div>
         </div>
 
         <div className="control-group">
@@ -208,7 +318,7 @@ const GraphViewer = () => {
         nodeLabel={(node) => `
           <div style="background: rgba(0,0,0,0.8); padding: 8px; border-radius: 4px; font-family: Inter, sans-serif;">
              <div style="color: #60a5fa; font-size: 10px; margin-bottom: 2px;">${node.labels?.filter((l) => l !== "Test")[0] || "Node"}</div>
-             <div style="font-weight: bold; color: white;">${node.properties?.name || node.properties?.title || node.id}</div>
+             <div style="font-weight: bold; color: white;">${node.properties?.name || node.properties?.title || node.properties?.Title || node.id}</div>
           </div>
         `}
         nodeColor={(node) => {
@@ -267,6 +377,7 @@ const GraphViewer = () => {
               <h2>
                 {selectedNode.properties?.name ||
                   selectedNode.properties?.title ||
+                  selectedNode.properties?.Title ||
                   "Node Info"}
               </h2>
               <div className="node-labels">
