@@ -245,7 +245,7 @@ const GraphViewer = () => {
               <input
                 type="text"
                 className="custom-input"
-                placeholder="Enter ID..."
+                placeholder="Enter ID/Name..."
                 value={searchId}
                 onChange={(e) => setSearchId(e.target.value)}
               />
