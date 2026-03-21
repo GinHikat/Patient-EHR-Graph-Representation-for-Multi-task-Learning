@@ -63,8 +63,8 @@ graph TD;
 
 | Layer | Technology | Role |
 |---|---|---|
-| **Frontend** | React + Vite + react-force-graph-2d | Interactive graph visualization |
-| **Backend** | FastAPI + Python | REST API, graph query logic |
+| **Frontend** | React + Vite + Vercel | Interactive graph visualization |
+| **Backend** | FastAPI + Render | REST API, graph query logic |
 | **Database** | Neo4j | Graph storage & traversal |
 | **Modules** | Python scripts | Dataset preprocessing & graph ingestion |
 | **Shared** | Python utilities | Google Sheets/Drive integration, helpers |
@@ -146,6 +146,8 @@ npm run dev
 ```
 
 The app will be available at `http://localhost:5173`.
+
+Or just simply open the Web on `https://patient-ehr-graph.vercel.app/`. However, due to Free tier Render, the App may need an amount of time for Cold start 🦫
 
 ---
 
