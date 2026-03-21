@@ -64,20 +64,26 @@ def get_graph_data(limit: int, node_types: list[str] = None, namespace: str = "T
 
         return {"nodes": list(nodes.values()), "links": links}
 
-def get_node_by_id(node_id: str, namespace: str = "Test"):
+def get_node_by_id(node_id: str, namespace: str = None):
     driver = get_db_driver()
-    # Find the target nodes first, then fetch all direct neighbors
+    # If no specific namespace is provided, search across all nodes.
+    # Otherwise, filter by both the namespace label and searching criteria.
+    label_part = f"n:`{namespace}`" if namespace else "TRUE"
+    
     query = f"""
-    MATCH (n:`{namespace}`)
-    WHERE elementId(n) = $node_id 
+    MATCH (n)
+    WHERE {label_part}
+    AND (
+       elementId(n) = $node_id 
        OR n.id = $node_id 
-       OR toLower(n.name) = toLower($node_id) 
-       OR toLower(n.title) = toLower($node_id)
-       OR toLower(n.Title) = toLower($node_id)
-    WITH n LIMIT 5
+       OR toLower(n.name) CONTAINS toLower($node_id) 
+       OR toLower(n.title) CONTAINS toLower($node_id)
+       OR toLower(n.Title) CONTAINS toLower($node_id)
+    )
+    WITH n LIMIT 10
     OPTIONAL MATCH (n)-[r]-(m)
     RETURN n, r, m
-    LIMIT 200
+    LIMIT 300
     """
     
     with driver.session() as session:

@@ -20,3 +20,12 @@ MATCH (a)-[r:INTERACTS_WITH]->(b)
 WITH a, b, collect(r) AS rels
 WHERE size(rels) > 1
 FOREACH (r IN tail(rels) | DELETE r);
+
+//ensure correct non overlapping attributes
+MATCH (n:Test)
+SET n.mesh_id = n.MeSH_id,
+    n.alias = coalesce(n.alternative_name, n.alias),
+    n.omim_id = n.OMIM_id
+REMOVE n.MeSH_id,
+        n.OMIM_id,
+        n.alternative_name
