@@ -6,14 +6,37 @@ import { X } from "lucide-react";
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || "http://localhost:8000/api";
 
-// Generate colors based on string
+// Predefined high-contrast palette for common EHR and CTD node types
+const TYPE_COLORS = {
+  Patient: "#3b82f6", // Blue
+  Condition: "#f43f5e", // Rose/Red (more vibrant)
+  Disease: "#f43f5e", // Rose/Red
+  Drug: "#fbbf24", // Amber (brighter)
+  Observation: "#10b981", // Green
+  Procedure: "#8b5cf6", // Violet
+  Encounter: "#ec4899", // Pink
+  LabResult: "#06b6d4", // Cyan
+  Medication: "#f97316", // Orange
+  Allergy: "#ef4444", // Red
+  Immunization: "#6366f1", // Indigo
+  Gene: "#fb7185", // Rose
+  Pathway: "#2dd4bf", // Teal
+  Chemical: "#facc15", // Yellow
+};
+
+// Generate high-contrast colors based on string
 const getColor = (str) => {
+  if (TYPE_COLORS[str]) return TYPE_COLORS[str];
+
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
     hash = str.charCodeAt(i) + ((hash << 5) - hash);
   }
-  const c = (hash & 0x00ffffff).toString(16).toUpperCase();
-  return "#" + "00000".substring(0, 6 - c.length) + c;
+
+  // Use HSL for consistent vibrancy and contrast against dark background
+  // Hue: 0-360, Saturation: 80% (vibrant), Lightness: 60% (bright but not washed out)
+  const h = Math.abs(hash) % 360;
+  return `hsl(${h}, 85%, 65%)`;
 };
 
 const GraphViewer = () => {
@@ -317,18 +340,54 @@ const GraphViewer = () => {
         ref={fgRef}
         graphData={graphData}
         nodeLabel={(node) => `
-          <div style="background: rgba(0,0,0,0.8); padding: 8px; border-radius: 4px; font-family: Inter, sans-serif;">
-             <div style="color: #60a5fa; font-size: 10px; margin-bottom: 2px;">${node.labels?.filter((l) => l !== "Test")[0] || "Node"}</div>
-             <div style="font-weight: bold; color: white;">${node.properties?.name || node.properties?.title || node.properties?.Title || node.id}</div>
+          <div style="background: rgba(0,0,0,0.9); padding: 12px; border-radius: 8px; font-family: Inter, sans-serif; box-shadow: 0 4px 20px rgba(0,0,0,0.5); min-width: 140px; border: 1px solid rgba(255,255,255,0.1);">
+             <div style="color: #60a5fa; font-size: 12px; font-weight: 600; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.8;">${node.labels?.filter((l) => l !== "Test")[0] || "Node"}</div>
+             <div style="font-weight: 700; color: white; font-size: 16px; line-height: 1.4;">${node.properties?.name || node.properties?.title || node.properties?.Title || node.id}</div>
           </div>
         `}
-        nodeColor={(node) => {
-          if (highlightNodes.size > 0 && !highlightNodes.has(node)) {
-            return "rgba(255, 255, 255, 0.1)";
+        nodeRelSize={7}
+        nodeCanvasObject={(node, ctx, globalScale) => {
+          const label = node.labels?.[0] || "Unknown";
+          const isHighlighted =
+            highlightNodes.size === 0 || highlightNodes.has(node);
+          const isHovered = hoverNode === node;
+          const color = getColor(label);
+          const fontSize = 12 / globalScale;
+          const radius = 6;
+
+          // Dim nodes that are not highlighted
+          ctx.globalAlpha = isHighlighted ? 1 : 0.15;
+
+          // Draw node shadow/glow if highlighted or hovered
+          if (isHighlighted || isHovered) {
+            ctx.beginPath();
+            ctx.arc(node.x, node.y, radius + 1, 0, 2 * Math.PI, false);
+            ctx.fillStyle = isHovered
+              ? "rgba(255, 255, 255, 0.3)"
+              : "rgba(0, 0, 0, 0.3)";
+            ctx.fill();
           }
-          return getColor(node.labels?.[0] || "Unknown");
+
+          // Draw main circle
+          ctx.beginPath();
+          ctx.arc(node.x, node.y, radius, 0, 2 * Math.PI, false);
+          ctx.fillStyle = color;
+          ctx.fill();
+
+          // Draw white border for high contrast
+          ctx.strokeStyle = "white";
+          ctx.lineWidth = (isHovered ? 2 : 1) / globalScale;
+          ctx.stroke();
+
+          // Reset alpha for following operations
+          ctx.globalAlpha = 1;
         }}
-        nodeRelSize={6}
+        nodePointerAreaPaint={(node, color, ctx) => {
+          ctx.fillStyle = color;
+          ctx.beginPath();
+          ctx.arc(node.x, node.y, 7, 0, 2 * Math.PI, false);
+          ctx.fill();
+        }}
         linkWidth={(link) => (highlightLinks.has(link) ? 3 : 1)}
         linkColor={(link) =>
           highlightLinks.has(link)
@@ -337,7 +396,12 @@ const GraphViewer = () => {
         }
         linkDirectionalParticles={(link) => (highlightLinks.has(link) ? 4 : 0)}
         linkDirectionalParticleWidth={4}
-        linkLabel="type"
+        linkLabel={(link) => `
+          <div style="background: rgba(0,0,0,0.9); padding: 8px 12px; border-radius: 4px; font-family: Inter, sans-serif; color: white; border: 1px solid rgba(255,255,255,0.1);">
+            <div style="color: #60a5fa; font-size: 10px; font-weight: 600; text-transform: uppercase;">Relationship</div>
+            <div style="font-weight: 700; font-size: 14px;">${link.type}</div>
+          </div>
+        `}
         linkCanvasObjectMode={() => "after"}
         linkCanvasObject={(link, ctx) => {
           const start = link.source;
@@ -352,7 +416,7 @@ const GraphViewer = () => {
           let textAngle = Math.atan2(relLink.y, relLink.x);
           if (textAngle > Math.PI / 2) textAngle = -(Math.PI - textAngle);
           if (textAngle < -Math.PI / 2) textAngle = -(-Math.PI - textAngle);
-          ctx.font = `4px Inter, sans-serif`;
+          ctx.font = `6px Inter, sans-serif`;
           ctx.save();
           ctx.translate(textPos.x, textPos.y);
           ctx.rotate(textAngle);
@@ -360,7 +424,7 @@ const GraphViewer = () => {
           ctx.textBaseline = "middle";
           ctx.fillStyle = highlightLinks.has(link)
             ? "rgba(96, 165, 250, 1)"
-            : "rgba(255, 255, 255, 0.6)";
+            : "rgba(255, 255, 255, 0.4)";
           ctx.fillText(link.type, 0, -2);
           ctx.restore();
         }}
