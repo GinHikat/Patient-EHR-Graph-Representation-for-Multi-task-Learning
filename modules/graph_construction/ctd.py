@@ -1,3 +1,11 @@
+import pandas as pd 
+import sys, os
+from tqdm import tqdm as tqdm
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if project_root not in sys.path:
+    sys.path.append(project_root)
+
+from shared_functions.global_functions import *
 
 # Match between current and CTD Drugs, if match then add with more attributes
 
@@ -175,6 +183,8 @@
     query_neo4j("CREATE INDEX IF NOT EXISTS FOR (n:Disease) ON (n.id)")
     query_neo4j("CREATE INDEX IF NOT EXISTS FOR (n:Disease) ON (n.mesh_id)")
 
+    # Connect Disease ontology
+
     dis_df['parent'] = dis_df['parent'].apply(lambda x: ast.literal_eval(x))
 
     query = """
@@ -196,3 +206,29 @@
         batch = rows[i:i+BATCH_SIZE]
         dml_ddl_neo4j(query, progress=False, rows=batch)
 
+    # Same with Chemicals
+
+    chem_df['parents'] = chem_df['parents'].apply(lambda x: ast.literal_eval(x))
+
+    query = """
+        UNWIND $rows AS row
+        MATCH (child:Drug {mesh_id: row.id})
+        UNWIND row.parents AS parent_id
+        MATCH (parent:Drug {mesh_id: parent_id})
+        MERGE (child)-[:CHILD_OF]->(parent)
+    """
+
+    rows = [
+        {"id": row["id"], "parents": row["parents"] if isinstance(row["parents"], list) else []}
+        for _, row in chem_df.iterrows()
+    ]
+
+    BATCH_SIZE = 500
+    START_BATCH = 20  
+
+    for i in tqdm(range(START_BATCH * BATCH_SIZE, len(rows), BATCH_SIZE), 
+                desc="Creating CHILD_OF relationships",
+                initial=START_BATCH,
+                total=len(rows) // BATCH_SIZE):
+        batch = rows[i:i+BATCH_SIZE]
+        dml_ddl_neo4j(query, progress=False, rows=batch)
