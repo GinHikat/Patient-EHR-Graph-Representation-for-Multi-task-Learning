@@ -1,3 +1,11 @@
+import pandas as pd 
+import sys, os
+from tqdm import tqdm as tqdm
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if project_root not in sys.path:
+    sys.path.append(project_root)
+
+from shared_functions.global_functions import *
 
 chem_dis = os.path.join(ctd_path, 'chem_dis.csv')
 chem = os.path.join(ctd_path, 'chemicals.csv')

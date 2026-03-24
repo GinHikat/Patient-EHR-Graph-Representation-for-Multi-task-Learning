@@ -29,3 +29,10 @@ SET n.mesh_id = n.MeSH_id,
 REMOVE n.MeSH_id,
         n.OMIM_id,
         n.alternative_name
+
+// Drop duplicates name
+MATCH (n)
+WITH n.name AS name, collect(n) AS nodes
+WHERE size(nodes) > 1
+UNWIND nodes[1..] AS duplicate
+DETACH DELETE duplicate

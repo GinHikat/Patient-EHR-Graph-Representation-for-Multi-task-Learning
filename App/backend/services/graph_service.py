@@ -8,7 +8,7 @@ def get_edge_types_data(namespace: str = "Test"):
         result = session.run(query)
         return [record["type"] for record in result]
 
-def get_graph_data(limit: int, node_types: list[str] = None, namespace: str = "Test"):
+def get_graph_data(limit: int, node_types: list[str] = None, edge_types: list[str] = None, namespace: str = "Test"):
     driver = get_db_driver()
     
     # 1. Determine labels to balance
@@ -19,18 +19,26 @@ def get_graph_data(limit: int, node_types: list[str] = None, namespace: str = "T
         target_labels = available_labels
         
     # 2. Determine edge types to balance
-    target_edge_types = get_edge_types_data(namespace)
+    all_edge_types = get_edge_types_data(namespace)
+    if edge_types:
+        target_edge_types = [t for t in all_edge_types if t in edge_types]
+    else:
+        target_edge_types = all_edge_types
     
     if not target_labels and not target_edge_types:
         return {"nodes": [], "links": []}
 
     # 3. Calculate quotas for each category to ensure even distribution
-    # We aim for roughly 'limit' nodes total.
-    num_node_slots = len(target_labels)
-    num_edge_slots = len(target_edge_types)
+    # If we are filtering by edge type specifically, we focus more on edges.
+    if edge_types and not node_types:
+        num_node_slots = 0 # Don't just sample random nodes if we want specific edges
+        num_edge_slots = len(target_edge_types)
+    else:
+        num_node_slots = len(target_labels)
+        num_edge_slots = len(target_edge_types)
+        
     total_slots = num_node_slots + num_edge_slots
     
-    # Heuristic to stay around the limit: node slots use 1 node, edge slots use ~1.5 new nodes
     quota = int(limit / (num_node_slots + 1.2 * num_edge_slots)) if total_slots > 0 else limit
     quota = max(1, quota)
 
@@ -38,28 +46,29 @@ def get_graph_data(limit: int, node_types: list[str] = None, namespace: str = "T
     links = []
 
     with driver.session() as session:
-        # Step A: Sample nodes balanced by label
-        for label in target_labels:
-            query = f"""
-            MATCH (n:`{label}`)
-            WHERE n:`{namespace}`
-            RETURN n
-            LIMIT {quota}
-            """
-            result = session.run(query)
-            for record in result:
-                n = record["n"]
-                if n:
-                    eid = n.element_id if hasattr(n, "element_id") else str(getattr(n, "id", n))
-                    if eid not in nodes:
-                        nodes[eid] = {"id": eid, "labels": list(n.labels), "properties": dict(n)}
+        # Step A: Sample nodes balanced by label (only if not strictly filtering by edges)
+        if num_node_slots > 0:
+            for label in target_labels:
+                query = f"""
+                MATCH (n:`{label}`)
+                WHERE n:`{namespace}`
+                RETURN n
+                LIMIT {quota}
+                """
+                result = session.run(query)
+                for record in result:
+                    n = record["n"]
+                    if n:
+                        eid = n.element_id if hasattr(n, "element_id") else str(getattr(n, "id", n))
+                        if eid not in nodes:
+                            nodes[eid] = {"id": eid, "labels": list(n.labels), "properties": dict(n)}
 
-        # Step B: Sample edges balanced by type (to ensure edge diversity)
+        # Step B: Sample edges balanced by type
         for etype in target_edge_types:
             query = f"""
             MATCH (n:`{namespace}`)-[r:`{etype}`]-(m:`{namespace}`)
             RETURN n, r, m
-            LIMIT {quota}
+            LIMIT {quota * 2 if edge_types else quota}
             """
             result = session.run(query)
             for record in result:
@@ -85,13 +94,13 @@ def get_graph_data(limit: int, node_types: list[str] = None, namespace: str = "T
         # Step C: Enrichment - fetch all edges between the nodes we've already collected
         if nodes:
             node_ids = list(nodes.keys())
-            # Search for relationships between collected nodes to make the graph more connected
             query = f"""
             MATCH (n:`{namespace}`)-[r]-(m:`{namespace}`)
             WHERE elementId(n) IN $ids AND elementId(m) IN $ids
+            {"AND type(r) IN $etypes" if edge_types else ""}
             RETURN r
             """
-            result = session.run(query, ids=node_ids)
+            result = session.run(query, ids=node_ids, etypes=edge_types)
             for record in result:
                 r = record["r"]
                 start_node = r.start_node if hasattr(r, "start_node") else r.nodes[0]
@@ -128,6 +137,8 @@ def get_node_by_id(node_id: str, namespace: str = None):
        OR toLower(n.name) CONTAINS toLower($node_id) 
        OR toLower(n.title) CONTAINS toLower($node_id)
        OR toLower(n.Title) CONTAINS toLower($node_id)
+       OR toLower(n.Title) CONTAINS toLower($node_id)
+       OR toLower(n.name) CONTAINS toLower($node_id)
     )
     WITH n LIMIT 10
     OPTIONAL MATCH (n)-[r]-(m)
@@ -183,19 +194,33 @@ def get_node_types_data():
 
 def get_database_stats_data():
     driver = get_db_driver()
-    # Using faster subqueries for counts
+    # Breakdown counts by label and relationship type
     query = """
-    CALL {
-      MATCH (n:Test) RETURN count(n) as nodeCount
+    CALL () {
+      MATCH (n:Test)
+      WITH count(n) as totalNodes
+      MATCH (n:Test)
+      UNWIND [l IN labels(n) WHERE l <> 'Test'] as label
+      WITH totalNodes, label, count(n) as labelCount
+      RETURN totalNodes, collect({type: label, count: labelCount}) as nodeBreakdown
     }
-    CALL {
-      MATCH (:Test)-[r]->(:Test) RETURN count(r) as edgeCount
+    CALL () {
+      MATCH (:Test)-[r]->(:Test)
+      WITH count(r) as totalEdges
+      MATCH (:Test)-[r]->(:Test)
+      WITH totalEdges, type(r) as relType, count(r) as relCount
+      RETURN totalEdges, collect({type: relType, count: relCount}) as edgeBreakdown
     }
-    RETURN nodeCount, edgeCount
+    RETURN totalNodes, nodeBreakdown[..15] as nodeBreakdown, totalEdges, edgeBreakdown[..15] as edgeBreakdown
     """
     with driver.session() as session:
         result = session.run(query)
         record = result.single()
         if record:
-            return record["nodeCount"], record["edgeCount"]
-        return 0, 0
+            return {
+                "total_nodes": record["totalNodes"],
+                "node_breakdown": record["nodeBreakdown"],
+                "total_edges": record["totalEdges"],
+                "edge_breakdown": record["edgeBreakdown"]
+            }
+        return {"total_nodes": 0, "node_breakdown": [], "total_edges": 0, "edge_breakdown": []}

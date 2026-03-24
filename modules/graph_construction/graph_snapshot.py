@@ -206,4 +206,4 @@ def graph_recreation(namespace = 'Test'):
 
 if __name__ == '__main__':
     snapshot_node()
-    snapshot_edge()
+    # snapshot_edge()

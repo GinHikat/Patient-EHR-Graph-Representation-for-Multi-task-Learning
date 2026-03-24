@@ -10,7 +10,13 @@ const API_BASE_URL =
 function App() {
   const [activeTab, setActiveTab] = useState("graph");
   const [showStats, setShowStats] = useState(false);
-  const [dbStats, setDbStats] = useState({ total_nodes: 0, total_edges: 0 });
+  const [dbStats, setDbStats] = useState({
+    total_nodes: 0,
+    total_edges: 0,
+    node_breakdown: [],
+    edge_breakdown: [],
+  });
+  const [externalFilter, setExternalFilter] = useState(null);
 
   useEffect(() => {
     const fetchStats = async () => {
@@ -23,6 +29,12 @@ function App() {
     };
     fetchStats();
   }, []);
+
+  const handleTypeClick = (type, category = "node") => {
+    setExternalFilter({ type, category });
+    setActiveTab("graph");
+    setShowStats(false);
+  };
 
   return (
     <div className="app-container">
@@ -58,24 +70,66 @@ function App() {
 
       {showStats && (
         <div className="database-stats-pane glass-panel animate-fade-in">
-          <div className="header-stat">
-            <span className="stat-label">Total Nodes</span>
-            <span className="stat-value">
-              {dbStats.total_nodes.toLocaleString()}
-            </span>
+          <div className="stats-summary">
+            <div className="header-stat">
+              <span className="stat-label">Total Nodes</span>
+              <span className="stat-value">
+                {dbStats.total_nodes.toLocaleString()}
+              </span>
+            </div>
+            <div className="header-stat">
+              <span className="stat-label">Total Edges</span>
+              <span className="stat-value">
+                {dbStats.total_edges.toLocaleString()}
+              </span>
+            </div>
           </div>
-          <div className="header-stat">
-            <span className="stat-label">Total Edges</span>
-            <span className="stat-value">
-              {dbStats.total_edges.toLocaleString()}
-            </span>
+
+          <div className="stats-breakdown">
+            <div className="breakdown-section">
+              <h3>Node Types</h3>
+              <div className="breakdown-list">
+                {dbStats.node_breakdown.map((item) => (
+                  <div
+                    key={item.type}
+                    className="breakdown-item"
+                    onClick={() => handleTypeClick(item.type, "node")}
+                  >
+                    <span className="breakdown-type">{item.type}</span>
+                    <span className="breakdown-count">
+                      {item.count.toLocaleString()}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="breakdown-section">
+              <h3>Relationship Types</h3>
+              <div className="breakdown-list">
+                {dbStats.edge_breakdown.map((item) => (
+                  <div
+                    key={item.type}
+                    className="breakdown-item"
+                    onClick={() => handleTypeClick(item.type, "edge")}
+                  >
+                    <span className="breakdown-type">{item.type}</span>
+                    <span className="breakdown-count">
+                      {item.count.toLocaleString()}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
       )}
 
       <main className="app-content">
         {activeTab === "graph" ? (
-          <GraphViewer />
+          <GraphViewer
+            externalFilter={externalFilter}
+            onFilterUsed={() => setExternalFilter(null)}
+          />
         ) : (
           <div className="coming-soon glass-panel">
             <h2>Settings View</h2>

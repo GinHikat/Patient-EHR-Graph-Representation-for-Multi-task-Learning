@@ -2,8 +2,16 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from api.routes import router as api_router
 from core.database import close_db_driver
+from contextlib import asynccontextmanager
 
-app = FastAPI(title="Graph API")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup logic can go here if needed
+    yield
+    # Shutdown logic
+    close_db_driver()
+
+app = FastAPI(title="Graph API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -14,10 +22,6 @@ app.add_middleware(
 )
 
 app.include_router(api_router, prefix="/api")
-
-@app.on_event("shutdown")
-def shutdown_event():
-    close_db_driver()
 
 if __name__ == "__main__":
     import uvicorn

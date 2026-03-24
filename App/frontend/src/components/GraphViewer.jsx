@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import ForceGraph2D from "react-force-graph-2d";
 import axios from "axios";
-import { X } from "lucide-react";
+import { X, Filter, ChevronLeft, ChevronRight } from "lucide-react";
 
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || "http://localhost:8000/api";
@@ -39,7 +39,7 @@ const getColor = (str) => {
   return `hsl(${h}, 85%, 65%)`;
 };
 
-const GraphViewer = () => {
+const GraphViewer = ({ externalFilter, onFilterUsed }) => {
   const [graphData, setGraphData] = useState({ nodes: [], links: [] });
   const [nodeTypes, setNodeTypes] = useState(["All"]);
   const [selectedTypes, setSelectedTypes] = useState(["All"]);
@@ -53,6 +53,23 @@ const GraphViewer = () => {
   const [searchLoading, setSearchLoading] = useState(false);
 
   const fgRef = useRef();
+
+  const [selectedRels, setSelectedRels] = useState([]);
+  const [showControls, setShowControls] = useState(true);
+
+  // Handle external filter from Stats Pane
+  useEffect(() => {
+    if (externalFilter) {
+      if (externalFilter.category === "node") {
+        setSelectedTypes([externalFilter.type]);
+        setSelectedRels([]);
+      } else {
+        setSelectedTypes(["All"]);
+        setSelectedRels([externalFilter.type]);
+      }
+      if (onFilterUsed) onFilterUsed();
+    }
+  }, [externalFilter, onFilterUsed]);
 
   // Load node types on mount
   useEffect(() => {
@@ -74,9 +91,15 @@ const GraphViewer = () => {
       try {
         const params = new URLSearchParams();
         params.append("limit", nodeLimit);
+
         if (!selectedTypes.includes("All")) {
           selectedTypes.forEach((type) => params.append("node_type", type));
         }
+
+        if (selectedRels.length > 0) {
+          selectedRels.forEach((rel) => params.append("edge_type", rel));
+        }
+
         const response = await axios.get(`${API_BASE_URL}/graph`, { params });
         setGraphData(response.data);
       } catch (err) {
@@ -261,80 +284,90 @@ const GraphViewer = () => {
         </div>
       )}
 
-      <div className="controls-panel glass-panel">
-        <div className="control-group">
-          <div className="search-pane">
-            <label>Search by ID / Name</label>
-            <form onSubmit={handleSearchNode} className="search-form">
-              <input
-                type="text"
-                className="custom-input"
-                placeholder="Enter ID/Name..."
-                value={searchId}
-                onChange={(e) => setSearchId(e.target.value)}
-              />
-              <button
-                type="submit"
-                className="search-btn"
-                disabled={searchLoading}
-              >
-                {searchLoading ? "..." : "Find"}
-              </button>
-            </form>
+      <button
+        className={`controls-toggle-btn glass-panel ${showControls ? "active" : ""}`}
+        onClick={() => setShowControls(!showControls)}
+        title={showControls ? "Hide Filters" : "Show Filters"}
+      >
+        {showControls ? <ChevronLeft size={20} /> : <Filter size={20} />}
+      </button>
+
+      {showControls && (
+        <div className="controls-panel glass-panel animate-slide-right">
+          <div className="control-group">
+            <div className="search-pane">
+              <label>Search by ID / Name</label>
+              <form onSubmit={handleSearchNode} className="search-form">
+                <input
+                  type="text"
+                  className="custom-input"
+                  placeholder="Enter ID/Name..."
+                  value={searchId}
+                  onChange={(e) => setSearchId(e.target.value)}
+                />
+                <button
+                  type="submit"
+                  className="search-btn"
+                  disabled={searchLoading}
+                >
+                  {searchLoading ? "..." : "Find"}
+                </button>
+              </form>
+            </div>
+          </div>
+
+          <div className="control-group">
+            <label>Filter by Node Type</label>
+            <div className="type-badges">
+              {nodeTypes.map((type) => (
+                <button
+                  key={type}
+                  className={`type-badge ${selectedTypes.includes(type) ? "active" : ""}`}
+                  onClick={() => toggleType(type)}
+                >
+                  {type}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="control-group">
+            <label>
+              <span>Node Limit</span>
+              <span style={{ color: "var(--accent-color)" }}>{nodeLimit}</span>
+            </label>
+            <input
+              type="range"
+              className="custom-slider"
+              min="10"
+              max="2000"
+              step="50"
+              value={nodeLimit}
+              onChange={(e) => setNodeLimit(parseInt(e.target.value))}
+            />
+          </div>
+
+          {/* Dynamic Legend based on visible nodes */}
+          <div className="legend">
+            <label
+              style={{ fontSize: "0.75rem", marginBottom: "8px", opacity: 0.8 }}
+            >
+              All Types
+            </label>
+            {nodeTypes
+              .filter((type) => type !== "All" && type !== "Test")
+              .map((label) => (
+                <div key={label} className="legend-item">
+                  <div
+                    className="legend-color"
+                    style={{ backgroundColor: getColor(label) }}
+                  ></div>
+                  <span>{label}</span>
+                </div>
+              ))}
           </div>
         </div>
-
-        <div className="control-group">
-          <label>Filter by Node Type</label>
-          <div className="type-badges">
-            {nodeTypes.map((type) => (
-              <button
-                key={type}
-                className={`type-badge ${selectedTypes.includes(type) ? "active" : ""}`}
-                onClick={() => toggleType(type)}
-              >
-                {type}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="control-group">
-          <label>
-            <span>Node Limit</span>
-            <span style={{ color: "var(--accent-color)" }}>{nodeLimit}</span>
-          </label>
-          <input
-            type="range"
-            className="custom-slider"
-            min="10"
-            max="2000"
-            step="50"
-            value={nodeLimit}
-            onChange={(e) => setNodeLimit(parseInt(e.target.value))}
-          />
-        </div>
-
-        {/* Dynamic Legend based on visible nodes */}
-        <div className="legend">
-          <label
-            style={{ fontSize: "0.75rem", marginBottom: "8px", opacity: 0.8 }}
-          >
-            All Types
-          </label>
-          {nodeTypes
-            .filter((type) => type !== "All" && type !== "Test")
-            .map((label) => (
-              <div key={label} className="legend-item">
-                <div
-                  className="legend-color"
-                  style={{ backgroundColor: getColor(label) }}
-                ></div>
-                <span>{label}</span>
-              </div>
-            ))}
-        </div>
-      </div>
+      )}
 
       <ForceGraph2D
         ref={fgRef}

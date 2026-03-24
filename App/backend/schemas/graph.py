@@ -18,6 +18,12 @@ class GraphResponse(BaseModel):
 class NodeTypesResponse(BaseModel):
     node_types: List[str]
 
+class BreakdownItem(BaseModel):
+    type: str
+    count: int
+
 class StatsResponse(BaseModel):
     total_nodes: int
+    node_breakdown: List[BreakdownItem]
     total_edges: int
+    edge_breakdown: List[BreakdownItem]

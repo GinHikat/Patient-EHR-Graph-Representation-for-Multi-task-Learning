@@ -224,7 +224,7 @@ from shared_functions.global_functions import *
     ]
 
     BATCH_SIZE = 500
-    START_BATCH = 20  
+    START_BATCH = 
 
     for i in tqdm(range(START_BATCH * BATCH_SIZE, len(rows), BATCH_SIZE), 
                 desc="Creating CHILD_OF relationships",

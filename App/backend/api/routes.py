@@ -9,10 +9,11 @@ router = APIRouter()
 def get_graph(
     limit: int = Query(100), 
     node_types: Optional[List[str]] = Query(None, alias="node_type"), 
+    edge_types: Optional[List[str]] = Query(None, alias="edge_type"),
     namespace: str = Query("Test")
 ):
-    # If node_types is passed as multiple query params like ?node_type=A&node_type=B
-    data = get_graph_data(limit, node_types, namespace)
+    # If node_types or edge_types are passed as multiple query params
+    data = get_graph_data(limit, node_types, edge_types, namespace)
     return data
 
 @router.get("/node_types", response_model=NodeTypesResponse)
@@ -29,5 +30,5 @@ def search_node(node_id: str, namespace: Optional[str] = Query(None)):
 
 @router.get("/stats", response_model=StatsResponse)
 def get_stats():
-    node_count, edge_count = get_database_stats_data()
-    return {"total_nodes": node_count, "total_edges": edge_count}
+    stats = get_database_stats_data()
+    return stats
