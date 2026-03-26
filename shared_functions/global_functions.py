@@ -1,26 +1,18 @@
 import pandas as pd
 import numpy as np
 import io
-import boto3
-from botocore.exceptions import NoCredentialsError
 from neo4j import GraphDatabase
-# from supabase import create_client, Client
 from typing import List, Dict, Any, Optional
 import tempfile
 import subprocess
 import os, sys
-import win32com.client as win32
 import json
 import time
-
-from sentence_transformers import SentenceTransformer
 
 from dotenv import load_dotenv
 
 env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env')
 load_dotenv(env_path)
-
-s3 = boto3.client("s3")
 
 #For neo4j
 URI = os.getenv('NEO4J_URI')

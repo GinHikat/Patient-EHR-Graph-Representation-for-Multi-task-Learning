@@ -2,6 +2,8 @@ import pandas as pd
 import sys, os
 import re
 from tqdm import tqdm
+import json
+from collections import defaultdict
 
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if project_root not in sys.path:
@@ -135,75 +137,129 @@ def graph_recreation(namespace = 'Test'):
     Output:
         New Graph with all nodes and edges 
     '''
+    batch_size = 500
+
+    print(f"Ensuring index and uniqueness constraint on {namespace}(id)...")
+    try:
+        query_neo4j(f"CREATE INDEX node_id_idx_{namespace} IF NOT EXISTS FOR (n:{namespace}) ON (n.id)")
+        query_neo4j(f"CREATE CONSTRAINT node_id_unique_{namespace} IF NOT EXISTS FOR (n:{namespace}) REQUIRE n.id IS UNIQUE")
+    except Exception as e:
+        print(f"Note on constraints: {e}")
+
+    print("Loading nodes and edges from CSV...")
+    # Performance: low_memory=False and dtype=str prevent mixed-type warnings and type mismatch in DB
+    nodes = pd.read_csv(os.path.join(data_dir, 'nodes.csv'), low_memory=False, dtype={'id': str})
+    edges = pd.read_csv(os.path.join(data_dir, 'edges.csv'), low_memory=False, dtype={'source': str, 'target': str})
+
+    # Granular Node Resume: Group nodes by label combination
+    print("Grouping nodes from CSV...")
+
+    node_groups = defaultdict(list)
     
-    nodes = pd.read_csv(os.path.join(data_dir, 'nodes.csv'))
-    edges = pd.read_csv(os.path.join(data_dir, 'edges.csv'))
+    # Use itertuples for better performance and memory efficiency than to_dict(records)
+    for r in tqdm(nodes.itertuples(index=False), total=len(nodes), desc="Grouping nodes"):
+        r_dict = r._asdict()
+        labels_str = r_dict.pop("labels", "")
+        # Filter out NaN/null properties if any to keep DB clean
+        clean_props = {k: v for k, v in r_dict.items() if pd.notna(v) and k != 'id'}
+        
+        # Parse labels and deduplicate
+        labels_list = [l.strip() for l in labels_str.split(":") if l.strip()] if isinstance(labels_str, str) else []
+        labels_list = list(dict.fromkeys(labels_list)) # Deduplicate keeping order
 
-    # Node creations
-    records = nodes.to_dict(orient="records")
+        # ENFORCE EXACTLY 3 LABELS:
+        # 1. Ensure namespace is present
+        if namespace not in labels_list:
+            labels_list.append(namespace)
+        
+        # 2. Add placeholders if less than 3
+        placeholders = ["Entity", "Node", "Unspecified"]
+        for p in placeholders:
+            if len(labels_list) >= 3: break
+            if p not in labels_list:
+                labels_list.append(p)
+        
+        # 3. Truncate if more than 3 (always keep namespace)
+        if len(labels_list) > 3:
+            # Keep namespace and the first 2 other labels
+            other_labels = [l for l in labels_list if l != namespace]
+            labels_list = [namespace] + other_labels[:2]
 
-    query = """
-    UNWIND $rows AS row
-    MERGE (n {id: row.id})
-    SET n += row.props
-    WITH n, row
-    CALL apoc.create.addLabels(n, row.labels) YIELD node
-    RETURN count(*)
-    """
+        labels_key = ":".join(sorted(labels_list))
+        node_groups[labels_key].append({"id": r_dict['id'], "props": clean_props})
 
-    # Prepare batches
-    for i in tqdm(range(0, len(records), batch_size), desc="Creating nodes"):
-        batch = records[i:i+batch_size]
+    print("Checking database for node status (exact label matching)...")
+    for labels_key, rows in node_groups.items():
+        labels_list = labels_key.split(":") if labels_key else []
+        label_clause = ""
+        if labels_key:
+            safe_labels = [lbl for lbl in labels_list if re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", lbl)]
+            if safe_labels: label_clause = ":" + ":".join(safe_labels)
+        
+        # Count nodes that have the required labels (flexible on extra labels)
+        count_query = f"MATCH (n{label_clause}) RETURN count(n) as total"
+        res = query_neo4j(count_query)
+        db_count = res[0]['total']
+        
+        if db_count >= len(rows):
+            print(f"  - Group ({labels_key or 'No Label'}): {len(rows)} nodes verified. Skipping.")
+            continue
+        
+        print(f"  - Group ({labels_key or 'No Label'}): {db_count}/{len(rows)} nodes exist. Syncing full group to ensure consistency...")
+        
+        node_query = f"UNWIND $rows AS row MERGE (n:{namespace}{{id: row.id}}) SET n += row.props {'SET n' + label_clause if label_clause else ''} RETURN count(*)"
+        
+        for k in tqdm(range(0, len(rows), batch_size), desc=f"Syncing {labels_key or 'No Label'}"):
+            query_neo4j(node_query, rows=rows[k:k+batch_size])
 
-        # Split props & labels
-        rows = []
-        for r in batch:
-            r = dict(r)
-            labels = r.pop("labels", "")
-            node_id = r.pop("id")
+    print(f"Final physical node count for '{namespace}': {query_neo4j(f'MATCH (n:{namespace}) RETURN count(n) as t')[0]['t']}")
 
-            rows.append({
-                "id": node_id,
-                "labels": labels.split(":") if labels else [],
-                "props": r
-            })
+    # Granular Edge Resume: Check counts by relationship type
+    print("Grouping edges from CSV...")
+    edge_groups = defaultdict(list)
+    for r in tqdm(edges.itertuples(index=False), total=len(edges), desc="Grouping edges"):
+        r_dict = r._asdict()
+        rel_type = r_dict.pop("type")
+        source = r_dict.pop("source")
+        target = r_dict.pop("target")
+        clean_props = {k: v for k, v in r_dict.items() if pd.notna(v)}
+        edge_groups[rel_type].append({"source": source, "target": target, "props": clean_props})
 
-        query_neo4j(query, rows=rows)
+    print("Checking database for edge status...")
+    for rel_type, rows in edge_groups.items():
+        if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", str(rel_type)):
+            print(f"  - Skipping invalid relationship type: {rel_type}")
+            continue
+            
+        # Count edges within the namespace context
+        count_query = f"MATCH (a:{namespace})-[r:{rel_type}]->(b:{namespace}) RETURN count(r) as total"
+        res = query_neo4j(count_query)
+        db_count = res[0]['total']
+        
+        if db_count >= len(rows):
+            print(f"  - Type '{rel_type}': {len(rows)} edges verified. Skipping.")
+            continue
+            
+        print(f"  - Type '{rel_type}': {db_count}/{len(rows)} edges exist. Syncing full group...")
+        edge_query = f"UNWIND $rows AS row MATCH (a:{namespace} {{id: row.source}}) MATCH (b:{namespace} {{id: row.target}}) MERGE (a)-[r:{rel_type}]->(b) SET r += row.props RETURN count(*)"
+        
+        for k in tqdm(range(0, len(rows), batch_size), desc=f"Syncing {rel_type}"):
+            query_neo4j(edge_query, rows=rows[k:k+batch_size])
 
-    print("All Nodes created")
+    print("Graph recreation complete.")
+    final_edge_count = query_neo4j(f"MATCH (a:{namespace})-[r]->(b:{namespace}) RETURN count(r) as t")[0]['t']
+    print(f"Total relationships in database for '{namespace}': {final_edge_count}")
 
-    # Edges adding
-    records = edges.to_dict(orient="records")
-
-    query = """
-    UNWIND $rows AS row
-    MATCH (a {id: row.source})
-    MATCH (b {id: row.target})
-    CALL apoc.create.relationship(a, row.type, row.props, b) YIELD rel
-    RETURN count(*)
-    """
-
-    for i in tqdm(range(0, len(records), batch_size), desc="Creating edges"):
-        batch = records[i:i+batch_size]
-
-        rows = []
-        for r in batch:
-            r = dict(r)
-            source = r.pop("source")
-            target = r.pop("target")
-            rel_type = r.pop("type")
-
-            rows.append({
-                "source": source,
-                "target": target,
-                "type": rel_type,
-                "props": r
-            })
-
-        query_neo4j(query, rows=rows)
-
-    print("All Edges created")
+def clear_database():
+    '''Fast deletion of all nodes and relationships in the database'''
+    print("Deleting all data...")
+    query = "MATCH (n) CALL { WITH n DETACH DELETE n } IN TRANSACTIONS OF 10000 ROWS"
+    query_neo4j(query)
+    print("Database cleared.")
 
 if __name__ == '__main__':
-    snapshot_node()
-    snapshot_edge()
+
+    # snapshot_node()
+    # snapshot_edge()
+    # clear_database()
+    graph_recreation()
