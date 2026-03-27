@@ -11,7 +11,7 @@ if project_root not in sys.path:
 
 load_dotenv(os.path.join(project_root, '.env'))
 
-from modules.dataset_preprocessing.enrichment import DatabaseExtract
+from enrichment import DatabaseExtract
 
 # Instantiate the parser
 uml_parser = DatabaseExtract()

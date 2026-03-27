@@ -273,7 +273,7 @@ def clear_database():
 
 if __name__ == '__main__':
 
-    # snapshot_node()
-    # snapshot_edge()
+    snapshot_node()
+    snapshot_edge()
     # clear_database()
     # graph_recreation()
