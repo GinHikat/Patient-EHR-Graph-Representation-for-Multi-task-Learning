@@ -10,6 +10,7 @@ if project_root not in sys.path:
     sys.path.append(project_root)
 
 from shared_functions.global_functions import *
+from shared_functions.global_functions import query_neo4j, driver, DATABASE, dml_ddl_neo4j
 
 data_dir = os.path.join(project_root, 'data')
 
@@ -164,53 +165,56 @@ def graph_recreation(namespace = 'Test'):
         clean_props = {k: v for k, v in r_dict.items() if pd.notna(v) and k != 'id'}
         
         # Parse labels and deduplicate
-        labels_list = [l.strip() for l in labels_str.split(":") if l.strip()] if isinstance(labels_str, str) else []
+        # Restore parsing from CSV string
+        labels_list = [str(l).strip() for l in str(labels_str).split(":") if str(l).strip()]
         labels_list = list(dict.fromkeys(labels_list)) # Deduplicate keeping order
 
-        # ENFORCE EXACTLY 3 LABELS:
-        # 1. Ensure namespace is present
-        if namespace not in labels_list:
-            labels_list.append(namespace)
-        
-        # 2. Add placeholders if less than 3
-        placeholders = ["Entity", "Node", "Unspecified"]
-        for p in placeholders:
-            if len(labels_list) >= 3: break
-            if p not in labels_list:
-                labels_list.append(p)
-        
-        # 3. Truncate if more than 3 (always keep namespace)
-        if len(labels_list) > 3:
-            # Keep namespace and the first 2 other labels
-            other_labels = [l for l in labels_list if l != namespace]
-            labels_list = [namespace] + other_labels[:2]
+        # 1. Identify components based on CSV structure: [Entity, Test, Database]
+        entity_types = ["Drug", "Disease"]
+        found_entity_type = next((l for l in labels_list if l in entity_types), "Entity")
+        db_labels = [l for l in labels_list if l != namespace and l not in entity_types]
+        found_db = db_labels[0] if db_labels else "Source"
 
-        labels_key = ":".join(sorted(labels_list))
+        # 2. Reconstruct exactly 3 labels in order: [Entity, Namespace, Database]
+        labels_list = [found_entity_type, namespace, found_db]
+        
+        # We preserve the order in the key for grouping
+        labels_key = ":".join(labels_list)
         node_groups[labels_key].append({"id": r_dict['id'], "props": clean_props})
 
     print("Checking database for node status (exact label matching)...")
+    from shared_functions.global_functions import dml_ddl_neo4j
+    
     for labels_key, rows in node_groups.items():
-        labels_list = labels_key.split(":") if labels_key else []
-        label_clause = ""
-        if labels_key:
-            safe_labels = [lbl for lbl in labels_list if re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", lbl)]
-            if safe_labels: label_clause = ":" + ":".join(safe_labels)
+        # labels_key is [Type, Test, Database]
+        label_clause = ":" + labels_key if labels_key else ""
         
-        # Count nodes that have the required labels (flexible on extra labels)
+        # Count nodes that have the required labels
         count_query = f"MATCH (n{label_clause}) RETURN count(n) as total"
         res = query_neo4j(count_query)
         db_count = res[0]['total']
         
         if db_count >= len(rows):
-            print(f"  - Group ({labels_key or 'No Label'}): {len(rows)} nodes verified. Skipping.")
+            print(f"  - Group ({labels_key}): {len(rows)} nodes verified. Skipping.")
             continue
         
-        print(f"  - Group ({labels_key or 'No Label'}): {db_count}/{len(rows)} nodes exist. Syncing full group to ensure consistency...")
+        print(f"  - Group ({labels_key}): {db_count}/{len(rows)} nodes exist. Syncing full group...")
         
-        node_query = f"UNWIND $rows AS row MERGE (n:{namespace}{{id: row.id}}) SET n += row.props {'SET n' + label_clause if label_clause else ''} RETURN count(*)"
+        # To enforce order and exactly 3 labels, we clear ALL possible labels first,
+        # INCLUDING the namespace itself, so that the order in SET is respected.
+        common_labels = f"{namespace}:Drug:Disease:HPO:CTD:PubMed:DrugBank:DB:Source:Entity:Node:Unspecified"
+        node_query = f"""
+        UNWIND $rows AS row 
+        MERGE (n:{namespace}{{id: row.id}}) 
+        SET n += row.props 
+        REMOVE n:{common_labels}
+        SET n{label_clause} 
+        RETURN count(*)
+        """
         
-        for k in tqdm(range(0, len(rows), batch_size), desc=f"Syncing {labels_key or 'No Label'}"):
-            query_neo4j(node_query, rows=rows[k:k+batch_size])
+        for k in tqdm(range(0, len(rows), batch_size), desc=f"Syncing {labels_key}"):
+            dml_ddl_neo4j(node_query, progress=False, rows=rows[k:k+batch_size])
+
 
     print(f"Final physical node count for '{namespace}': {query_neo4j(f'MATCH (n:{namespace}) RETURN count(n) as t')[0]['t']}")
 
@@ -244,7 +248,7 @@ def graph_recreation(namespace = 'Test'):
         edge_query = f"UNWIND $rows AS row MATCH (a:{namespace} {{id: row.source}}) MATCH (b:{namespace} {{id: row.target}}) MERGE (a)-[r:{rel_type}]->(b) SET r += row.props RETURN count(*)"
         
         for k in tqdm(range(0, len(rows), batch_size), desc=f"Syncing {rel_type}"):
-            query_neo4j(edge_query, rows=rows[k:k+batch_size])
+            dml_ddl_neo4j(edge_query, progress=False, rows=rows[k:k+batch_size])
 
     print("Graph recreation complete.")
     final_edge_count = query_neo4j(f"MATCH (a:{namespace})-[r]->(b:{namespace}) RETURN count(r) as t")[0]['t']
@@ -253,13 +257,23 @@ def graph_recreation(namespace = 'Test'):
 def clear_database():
     '''Fast deletion of all nodes and relationships in the database'''
     print("Deleting all data...")
-    query = "MATCH (n) CALL { WITH n DETACH DELETE n } IN TRANSACTIONS OF 10000 ROWS"
-    query_neo4j(query)
-    print("Database cleared.")
+    query = "MATCH (n) CALL (n) { DETACH DELETE n } IN TRANSACTIONS OF 10000 ROWS"
+    
+    # CALL { ... } IN TRANSACTIONS requires an implicit transaction.
+    # driver.execute_query() uses managed transactions, which will fail.
+    try:
+        with driver.session(database=DATABASE) as session:
+            session.run(query)
+        print("Database cleared.")
+    except Exception as e:
+        print(f"Error clearing database: {e}")
+        print("Falling back to standard delete (may be slow/fail on large DBs)...")
+        query_neo4j("MATCH (n) DETACH DELETE n")
+        print("Database cleared (fallback).")
 
 if __name__ == '__main__':
 
     # snapshot_node()
     # snapshot_edge()
     # clear_database()
-    graph_recreation()
+    # graph_recreation()
