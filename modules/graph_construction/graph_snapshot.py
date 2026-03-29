@@ -183,7 +183,6 @@ def graph_recreation(namespace = 'Test'):
         node_groups[labels_key].append({"id": r_dict['id'], "props": clean_props})
 
     print("Checking database for node status (exact label matching)...")
-    from shared_functions.global_functions import dml_ddl_neo4j
     
     for labels_key, rows in node_groups.items():
         # labels_key is [Type, Test, Database]
