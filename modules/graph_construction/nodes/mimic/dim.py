@@ -15,7 +15,7 @@ from modules.dataset_preprocessing.utils import *
 # Start by simply parsing dimensional tables
 
 # Path definitions
-data_dir = 'F:/Din/Study/Education/Projects/Thesis/data'
+data_dir = os.getenv('DATA_DIR')
 mimic_path = os.path.join(data_dir, 'mimic_iv')
 hosp = os.path.join(mimic_path, 'hosp')
 icu = os.path.join(mimic_path, 'icu')
