@@ -1,6 +1,16 @@
 import ast
 import pandas as pd
 import numpy as np
+import sys, os
+project_root = os.path.abspath(os.path.join(os.getcwd(), ".."))
+if project_root not in sys.path:
+    sys.path.append(project_root)
+
+data_dir = 'F:/Din/Study/Education/Projects/Thesis/data' # don't mind this hardcoded path lol
+
+mimic_path = os.path.join(data_dir, 'mimic_iv')
+
+hosp = os.path.join(mimic_path, 'hosp')
 
 def to_list(df, col):
     """
@@ -47,3 +57,35 @@ def safe_parse(x):
         return result if isinstance(result, list) else [result]
     except (ValueError, SyntaxError):
         return [x]  
+
+def data_preview(type, name):
+
+    '''
+    Preview only a subset of the dataframe for large dataframes, used for stream processing
+    '''
+
+    sample_path = os.path.join(mimic_path, type, f'{name}.csv')
+
+    con = duckdb.connect()
+
+    query = f"""
+    SELECT * 
+    FROM read_csv_auto('{sample_path}',
+    ignore_errors = True
+    )
+    """
+
+    result = con.execute(query)
+
+    chunk = result.fetch_df_chunk(500)
+
+    return chunk
+
+def read_full(type, name):
+
+    sample_path = os.path.join(mimic_path, type, f'{name}.csv')
+
+    df = pd.read_csv(sample_path)
+    
+    return df
+

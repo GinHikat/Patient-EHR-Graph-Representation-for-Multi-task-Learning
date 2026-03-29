@@ -27,7 +27,7 @@ import mimetypes
 
 load_dotenv()
 
-google_api_creds = 'D:/Study/Education/Projects/Group_Project/secrets/ggsheet_credentials.json'
+google_api_creds = 'secrets/ggsheet_credentials.json'
 spreadsheet_id = os.getenv('GOOGLE_SHEET_ID') 
 drive_id = os.getenv('GOOGLE_DRIVE_ID')
 
