@@ -89,3 +89,38 @@ def read_full(type, name):
     
     return df
 
+def to_date(df, col):
+    '''
+    Convert a column of strings to datetime.
+    
+    Args:
+        df (pd.DataFrame): The DataFrame to process.
+        col (str): The column to convert.
+    '''
+    df[col] = pd.to_datetime(df[col])
+
+def shift_year(series, offset_series):
+    '''
+    Shift the year of a datetime series by an offset series.
+    
+    Args:
+        series (pd.Series): The datetime series to shift.
+        offset_series (pd.Series): The offset series.
+    
+    Returns:
+        pd.Series: The shifted datetime series.
+    '''
+    result = []
+    for dt, offset in zip(series, offset_series):
+        if pd.notna(dt):
+            new_year = dt.year + int(offset)
+            try:
+                result.append(dt.replace(year=new_year))
+            except ValueError:
+                # Feb 29 in a non-leap target year → use Feb 28
+                result.append(dt.replace(year=new_year, day=28))
+        else:
+            result.append(pd.NaT)
+    return pd.Series(result, index=series.index)
+
+    

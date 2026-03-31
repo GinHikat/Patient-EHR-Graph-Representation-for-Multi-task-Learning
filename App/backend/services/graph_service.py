@@ -1,5 +1,16 @@
 from core.database import get_db_driver
 from core.config import settings
+import neo4j.time
+
+def serialize_properties(props: dict) -> dict:
+    """Helper to convert Neo4j types to JSON-serializable formats."""
+    serialized = {}
+    for k, v in props.items():
+        if isinstance(v, (neo4j.time.DateTime, neo4j.time.Date)):
+            serialized[k] = v.isoformat()
+        else:
+            serialized[k] = v
+    return serialized
 
 def get_edge_types_data(namespace: str = "Test"):
     driver = get_db_driver()
@@ -61,7 +72,7 @@ def get_graph_data(limit: int, node_types: list[str] = None, edge_types: list[st
                     if n:
                         eid = n.element_id if hasattr(n, "element_id") else str(getattr(n, "id", n))
                         if eid not in nodes:
-                            nodes[eid] = {"id": eid, "labels": list(n.labels), "properties": dict(n)}
+                            nodes[eid] = {"id": eid, "labels": list(n.labels), "properties": serialize_properties(dict(n))}
 
         # Step B: Sample edges balanced by type
         for etype in target_edge_types:
@@ -78,7 +89,7 @@ def get_graph_data(limit: int, node_types: list[str] = None, edge_types: list[st
                     if node:
                         eid = node.element_id if hasattr(node, "element_id") else str(getattr(node, "id", node))
                         if eid not in nodes:
-                            nodes[eid] = {"id": eid, "labels": list(node.labels), "properties": dict(node)}
+                            nodes[eid] = {"id": eid, "labels": list(node.labels), "properties": serialize_properties(dict(node))}
                 
                 # Add relationship
                 r = record["r"]
@@ -87,7 +98,7 @@ def get_graph_data(limit: int, node_types: list[str] = None, edge_types: list[st
                     end_node = r.end_node if hasattr(r, "end_node") else r.nodes[1]
                     s_id = start_node.element_id if hasattr(start_node, "element_id") else str(getattr(start_node, "id", start_node))
                     e_id = end_node.element_id if hasattr(end_node, "element_id") else str(getattr(end_node, "id", end_node))
-                    link = {"source": s_id, "target": e_id, "type": r.type}
+                    link = {"source": s_id, "target": e_id, "type": r.type, "properties": serialize_properties(dict(r))}
                     if link not in links:
                         links.append(link)
 
@@ -107,7 +118,7 @@ def get_graph_data(limit: int, node_types: list[str] = None, edge_types: list[st
                 end_node = r.end_node if hasattr(r, "end_node") else r.nodes[1]
                 s_id = start_node.element_id if hasattr(start_node, "element_id") else str(getattr(start_node, "id", start_node))
                 e_id = end_node.element_id if hasattr(end_node, "element_id") else str(getattr(end_node, "id", end_node))
-                link = {"source": s_id, "target": e_id, "type": r.type}
+                link = {"source": s_id, "target": e_id, "type": r.type, "properties": serialize_properties(dict(r))}
                 if link not in links:
                     links.append(link)
 
@@ -155,13 +166,13 @@ def get_node_by_id(node_id: str, namespace: str = None):
             n = record["n"]
             if n:
                 elem_id = n.element_id if hasattr(n, "element_id") else str(getattr(n, "id", str(n)))
-                nodes[elem_id] = {"id": elem_id, "labels": list(n.labels), "properties": dict(n)}
+                nodes[elem_id] = {"id": elem_id, "labels": list(n.labels), "properties": serialize_properties(dict(n))}
             
             m = record.get("m")
             if m:
                 m_elem_id = m.element_id if hasattr(m, "element_id") else str(getattr(m, "id", str(m)))
                 if m_elem_id not in nodes:
-                    nodes[m_elem_id] = {"id": m_elem_id, "labels": list(m.labels), "properties": dict(m)}
+                    nodes[m_elem_id] = {"id": m_elem_id, "labels": list(m.labels), "properties": serialize_properties(dict(m))}
                 
             try:
                 r = record.get("r")
@@ -170,7 +181,7 @@ def get_node_by_id(node_id: str, namespace: str = None):
                     end_node = r.end_node if hasattr(r, "end_node") else r.nodes[1]
                     start_id = start_node.element_id if hasattr(start_node, "element_id") else str(getattr(start_node, "id", str(start_node)))
                     end_id = end_node.element_id if hasattr(end_node, "element_id") else str(getattr(end_node, "id", str(end_node)))
-                    links.append({"source": start_id, "target": end_id, "type": r.type})
+                    links.append({"source": start_id, "target": end_id, "type": r.type, "properties": serialize_properties(dict(r))})
             except Exception:
                 pass
 

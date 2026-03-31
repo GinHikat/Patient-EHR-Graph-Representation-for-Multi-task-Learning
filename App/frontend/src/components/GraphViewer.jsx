@@ -46,6 +46,7 @@ const GraphViewer = ({ externalFilter, onFilterUsed }) => {
   const [nodeLimit, setNodeLimit] = useState(100);
   const [loading, setLoading] = useState(false);
   const [selectedNode, setSelectedNode] = useState(null);
+  const [selectedLink, setSelectedLink] = useState(null);
   const [highlightNodes, setHighlightNodes] = useState(new Set());
   const [highlightLinks, setHighlightLinks] = useState(new Set());
   const [hoverNode, setHoverNode] = useState(null);
@@ -206,6 +207,7 @@ const GraphViewer = ({ externalFilter, onFilterUsed }) => {
   const handleNodeClick = useCallback(
     (node) => {
       setSelectedNode(node);
+      setSelectedLink(null);
 
       // Highlight connected nodes and links
       const connectedNodes = new Set();
@@ -232,6 +234,32 @@ const GraphViewer = ({ externalFilter, onFilterUsed }) => {
       if (fgRef.current) {
         fgRef.current.centerAt(node.x, node.y, 1000);
         fgRef.current.zoom(5, 2000);
+      }
+    },
+    [graphData],
+  );
+
+  const handleLinkClick = useCallback(
+    (link) => {
+      setSelectedLink(link);
+      setSelectedNode(null);
+
+      // Highlight the two nodes and the link
+      const connectedNodes = new Set();
+      const connectedLinks = new Set();
+
+      connectedLinks.add(link);
+      connectedNodes.add(link.source);
+      connectedNodes.add(link.target);
+
+      setHighlightNodes(connectedNodes);
+      setHighlightLinks(connectedLinks);
+
+      // Center on the link
+      if (fgRef.current && link.source.x !== undefined) {
+        const midX = (link.source.x + link.target.x) / 2;
+        const midY = (link.source.y + link.target.y) / 2;
+        fgRef.current.centerAt(midX, midY, 1000);
       }
     },
     [graphData],
@@ -269,6 +297,7 @@ const GraphViewer = ({ externalFilter, onFilterUsed }) => {
 
   const resetSelection = () => {
     setSelectedNode(null);
+    setSelectedLink(null);
     setHighlightNodes(new Set());
     setHighlightLinks(new Set());
     if (fgRef.current) {
@@ -463,6 +492,7 @@ const GraphViewer = ({ externalFilter, onFilterUsed }) => {
         }}
         onNodeClick={handleNodeClick}
         onNodeHover={handleNodeHover}
+        onLinkClick={handleLinkClick}
         onBackgroundClick={resetSelection}
         cooldownTicks={100}
         backgroundColor="rgba(0,0,0,0)" // Transparent to see gradient background
@@ -526,6 +556,45 @@ const GraphViewer = ({ externalFilter, onFilterUsed }) => {
               <span className="prop-value" style={{ opacity: 0.5 }}>
                 No additional properties
               </span>
+            )}
+          </div>
+        </div>
+      )}
+      
+      {selectedLink && (
+        <div className="node-info-panel glass-panel link-info-panel">
+          <div className="node-info-header">
+            <div>
+              <div className="node-info-category">Relationship Info</div>
+              <h2>{selectedLink.type}</h2>
+              <div className="link-direction">
+                <span className="node-label" style={{ borderLeft: "3px solid #60a5fa" }}>
+                  {typeof selectedLink.source === 'object' ? (selectedLink.source.properties?.name || selectedLink.source.id) : selectedLink.source}
+                </span>
+                <span className="arrow">→</span>
+                <span className="node-label" style={{ borderLeft: "3px solid #f43f5e" }}>
+                   {typeof selectedLink.target === 'object' ? (selectedLink.target.properties?.name || selectedLink.target.id) : selectedLink.target}
+                </span>
+              </div>
+            </div>
+            <button className="close-btn" onClick={resetSelection}>
+              <X size={20} />
+            </button>
+          </div>
+
+          <div className="property-list">
+            {Object.entries(selectedLink.properties || {}).map(([key, value]) => (
+              <div key={key} className="property-item">
+                <span className="prop-key">{key}</span>
+                <span className="prop-value">
+                  {typeof value === "object" ? JSON.stringify(value) : String(value)}
+                </span>
+              </div>
+            ))}
+            {Object.keys(selectedLink.properties || {}).length === 0 && (
+              <div className="prop-value" style={{ opacity: 0.5, padding: "10px 0" }}>
+                No attributes for this relationship
+              </div>
             )}
           </div>
         </div>

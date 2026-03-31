@@ -10,6 +10,7 @@ class Link(BaseModel):
     source: str
     target: str
     type: str
+    properties: Dict[str, Any] = {}
 
 class GraphResponse(BaseModel):
     nodes: List[Node]
