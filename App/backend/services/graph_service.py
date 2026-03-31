@@ -194,33 +194,32 @@ def get_node_types_data():
 
 def get_database_stats_data():
     driver = get_db_driver()
-    # Breakdown counts by label and relationship type
-    query = """
-    CALL () {
-      MATCH (n:Test)
-      WITH count(n) as totalNodes
-      MATCH (n:Test)
-      UNWIND [l IN labels(n) WHERE l <> 'Test'] as label
-      WITH totalNodes, label, count(n) as labelCount
-      RETURN totalNodes, collect({type: label, count: labelCount}) as nodeBreakdown
-    }
-    CALL () {
-      MATCH (:Test)-[r]->(:Test)
-      WITH count(r) as totalEdges
-      MATCH (:Test)-[r]->(:Test)
-      WITH totalEdges, type(r) as relType, count(r) as relCount
-      RETURN totalEdges, collect({type: relType, count: relCount}) as edgeBreakdown
-    }
-    RETURN totalNodes, nodeBreakdown[..15] as nodeBreakdown, totalEdges, edgeBreakdown[..15] as edgeBreakdown
-    """
     with driver.session() as session:
-        result = session.run(query)
-        record = result.single()
-        if record:
-            return {
-                "total_nodes": record["totalNodes"],
-                "node_breakdown": record["nodeBreakdown"],
-                "total_edges": record["totalEdges"],
-                "edge_breakdown": record["edgeBreakdown"]
-            }
-        return {"total_nodes": 0, "node_breakdown": [], "total_edges": 0, "edge_breakdown": []}
+        # 1. Total Nodes
+        total_nodes_res = session.run("MATCH (n:Test) RETURN count(n) as total")
+        total_nodes = total_nodes_res.single()["total"]
+        
+        # 2. Node Breakdown
+        node_breakdown_res = session.run("""
+            MATCH (n:Test)
+            RETURN labels(n) as labels, count(n) as count
+        """)
+        node_breakdown = [{"labels": record["labels"], "count": record["count"]} for record in node_breakdown_res]
+        
+        # 3. Total Edges
+        total_edges_res = session.run("MATCH (:Test)-[r]->(:Test) RETURN count(r) as total")
+        total_edges = total_edges_res.single()["total"]
+        
+        # 4. Edge Breakdown
+        edge_breakdown_res = session.run("""
+            MATCH (:Test)-[r]->(:Test)
+            RETURN type(r) as type, count(r) as count
+        """)
+        edge_breakdown = [{"type": record["type"], "count": record["count"]} for record in edge_breakdown_res]
+        
+        return {
+            "total_nodes": total_nodes,
+            "node_breakdown": node_breakdown,
+            "total_edges": total_edges,
+            "edge_breakdown": edge_breakdown
+        }

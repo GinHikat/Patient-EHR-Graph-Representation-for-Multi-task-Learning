@@ -637,3 +637,69 @@ body {
     transform: translateX(0);
   }
 }
+/* Hierarchy Styles */
+.hierarchy-list {
+  display: flex !important;
+  flex-direction: column !important;
+}
+
+.hierarchy-item-container {
+  display: flex;
+  flex-direction: column;
+}
+
+.hierarchy-label-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hierarchy-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.hierarchy-level-1 {
+  margin-left: 20px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.hierarchy-level-2 {
+  margin-left: 40px;
+  background: rgba(255, 255, 255, 0.015);
+  font-size: 0.75rem;
+}
+
+.hierarchy-level-3 {
+  margin-left: 60px;
+  background: transparent;
+  font-size: 0.7rem;
+}
+
+.hierarchy-children {
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid rgba(255, 255, 255, 0.05);
+  margin-left: 8px;
+}
+
+.hierarchy-misc {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--panel-border);
+}
+
+.hierarchy-misc::before {
+  content: "Other Labels";
+  display: block;
+  font-size: 0.6rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 8px;
+  opacity: 0.6;
+}

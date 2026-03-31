@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 class Node(BaseModel):
     id: str
@@ -19,7 +19,8 @@ class NodeTypesResponse(BaseModel):
     node_types: List[str]
 
 class BreakdownItem(BaseModel):
-    type: str
+    type: Optional[str] = None
+    labels: Optional[List[str]] = None
     count: int
 
 class StatsResponse(BaseModel):
