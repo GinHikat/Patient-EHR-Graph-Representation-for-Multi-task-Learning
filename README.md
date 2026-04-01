@@ -1,6 +1,6 @@
 # Patient EHR Graph Representation for Multi-task Learning
 
-A research project that constructs a structured **Knowledge Graph** from patient Electronic Health Records (EHR) and medical ontologies, and exposes it through a full-stack web application for interactive graph exploration.
+A research project that constructs a structured **Knowledge Graph** from patient Electronic Health Records (EHR) and Medical/Temporal ontologies, and exposes it through a full-stack web application for interactive graph exploration.
 
 ---
 
@@ -14,10 +14,10 @@ A research project that constructs a structured **Knowledge Graph** from patient
 ├── modules/
 │   ├── dataset_preprocessing/    # Raw data cleaning scripts
 │   └── graph_construction/       # Neo4j graph ingestion scripts
-├── notebooks/                    # Jupyter exploration notebooks
+├── notebooks/              
 ├── shared_functions/             # Shared utilities (Google Sheets, helpers)
-├── secrets/                      # Credentials (gitignored)
-├── .env.example                  # Environment variable template
+├── secrets/                      # Credentials 
+├── .env.example         
 ├── .gitignore
 └── requirements.txt
 ```
@@ -26,13 +26,13 @@ A research project that constructs a structured **Knowledge Graph** from patient
 
 ### Components Summary
 
-| Layer | Technology | Role |
-|---|---|---|
-| **Frontend** | React + Vite + Vercel | Interactive graph visualization |
-| **Backend** | FastAPI + Render | REST API, graph query logic |
-| **Database** | Neo4j | Graph storage & traversal |
-| **Modules** | Python scripts | Dataset preprocessing & graph ingestion |
-| **Shared** | Python utilities | Google Sheets/Drive integration, helpers |
+| Layer              | Technology            | Role                                     |
+| ------------------ | --------------------- | ---------------------------------------- |
+| **Frontend** | React + Vite + Vercel | Interactive graph visualization          |
+| **Backend**  | FastAPI + Render      | REST API, graph query logic              |
+| **Database** | Neo4j                 | Graph storage & traversal                |
+| **Modules**  | Python scripts        | Dataset preprocessing & graph ingestion  |
+| **Shared**   | Python utilities      | Google Sheets/Drive integration, helpers |
 
 ---
 
@@ -129,9 +129,9 @@ python -m pytest test
 
 ## 📋 Prerequisites
 
-| Requirement | Version |
-|---|---|
-| Python | 3.10+ |
-| Node.js + npm | v16+ |
-| Neo4j | Any accessible instance (local, Docker, or Aura) |
-| uv *(optional)* | Latest |
+| Requirement      | Version                                          |
+| ---------------- | ------------------------------------------------ |
+| Python           | 3.10+                                            |
+| Node.js + npm    | v16+                                             |
+| Neo4j            | Any accessible instance (local, Docker, or Aura) |
+| uv*(optional)* | Latest                                           |
