@@ -139,7 +139,7 @@ adm['length_of_stay'] = (adm['dischtime'] - adm['admittime']).dt.total_seconds()
             rows=rows
         )
 
-###### Create Admission-Admission Readmission relationship
+###### Create Admission-Admission Readmission relationship using the delay_df
     query = """
     UNWIND $rows AS row
 

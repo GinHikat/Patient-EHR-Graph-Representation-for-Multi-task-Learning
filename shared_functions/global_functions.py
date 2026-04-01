@@ -33,11 +33,17 @@ def query_neo4j(query: str, **params):
     ) #type: ignore
     return [record.data() for record in records]
 
-def dml_ddl_neo4j(query: str, progress = True, **params):
+def dml_ddl_neo4j(query: str, progress = True, implicit = False, **params):
     """
     Safe DML/DDL executor for Neo4j Aura.
     Auto-retries on transient connection failures.
     Creates short-lived sessions to avoid Aura's 5-minute idle timeout.
+    
+    Args:
+        query: The Cypher query.
+        progress: Whether to print operation statistics.
+        implicit: Set to True for batch queries using 'CALL ... IN TRANSACTIONS'.
+        **params: Parameters to include in the query.
     """
 
     MAX_RETRY = 5
@@ -47,9 +53,14 @@ def dml_ddl_neo4j(query: str, progress = True, **params):
         try:
             # Use a fresh session for every write to avoid Aura idle timeout
             with driver.session(database=DATABASE) as session:
-                result = session.execute_write(
-                    lambda tx: tx.run(query, **params).consume()
-                )
+                if implicit:
+                    # 'CALL ... IN TRANSACTIONS' requires an implicit (auto-commit) transaction.
+                    # Bypassing execute_write ensures no explicit transaction is started.
+                    result = session.run(query, **params).consume()
+                else:
+                    result = session.execute_write(
+                        lambda tx: tx.run(query, **params).consume()
+                    )
 
             c = result.counters
             if progress == True:

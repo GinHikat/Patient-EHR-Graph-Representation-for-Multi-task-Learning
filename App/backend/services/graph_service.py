@@ -56,6 +56,8 @@ def get_graph_data(limit: int, node_types: list[str] = None, edge_types: list[st
     nodes = {}
     links = []
 
+    is_filtered = node_types and "All" not in node_types
+
     with driver.session() as session:
         # Step A: Sample nodes balanced by label (only if not strictly filtering by edges)
         if num_node_slots > 0:
@@ -76,17 +78,29 @@ def get_graph_data(limit: int, node_types: list[str] = None, edge_types: list[st
 
         # Step B: Sample edges balanced by type
         for etype in target_edge_types:
+            # If filtered, ensure BOTH ends of the relationship match our target labels
+            where_clause = f"WHERE n:`{namespace}` AND m:`{namespace}`"
+            if is_filtered:
+                where_clause += " AND any(l IN labels(n) WHERE l IN $target_labels) AND any(l IN labels(m) WHERE l IN $target_labels)"
+            
             query = f"""
-            MATCH (n:`{namespace}`)-[r:`{etype}`]-(m:`{namespace}`)
+            MATCH (n)-[r:`{etype}`]-(m)
+            {where_clause}
             RETURN n, r, m
             LIMIT {quota * 2 if edge_types else quota}
             """
-            result = session.run(query)
+            result = session.run(query, target_labels=target_labels)
             for record in result:
-                # Add nodes
+                # Add nodes (with additional label check in case of complex label overlap or non-target labels)
                 for key in ["n", "m"]:
                     node = record[key]
                     if node:
+                        # Safety check: if is_filtered is true, only add the node if it matches target_labels
+                        if is_filtered:
+                            node_labels = set(node.labels)
+                            if not any(l in node_labels for l in target_labels):
+                                continue
+
                         eid = node.element_id if hasattr(node, "element_id") else str(getattr(node, "id", node))
                         if eid not in nodes:
                             nodes[eid] = {"id": eid, "labels": list(node.labels), "properties": serialize_properties(dict(node))}
@@ -98,9 +112,12 @@ def get_graph_data(limit: int, node_types: list[str] = None, edge_types: list[st
                     end_node = r.end_node if hasattr(r, "end_node") else r.nodes[1]
                     s_id = start_node.element_id if hasattr(start_node, "element_id") else str(getattr(start_node, "id", start_node))
                     e_id = end_node.element_id if hasattr(end_node, "element_id") else str(getattr(end_node, "id", end_node))
-                    link = {"source": s_id, "target": e_id, "type": r.type, "properties": serialize_properties(dict(r))}
-                    if link not in links:
-                        links.append(link)
+                    
+                    # Only add link if both nodes are in our allowed set
+                    if s_id in nodes and e_id in nodes:
+                        link = {"source": s_id, "target": e_id, "type": r.type, "properties": serialize_properties(dict(r))}
+                        if link not in links:
+                            links.append(link)
 
         # Step C: Enrichment - fetch all edges between the nodes we've already collected
         if nodes:

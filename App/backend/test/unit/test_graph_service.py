@@ -14,4 +14,11 @@ def test_get_node_types_data(mock_get_driver):
     
     labels = get_node_types_data()
     assert labels == ["Person", "Movie"]
-    mock_session.run.assert_called_once_with("CALL db.labels()")
+    
+    expected_query = """
+    MATCH (n) 
+    WITH DISTINCT labels(n) AS labels 
+    UNWIND labels AS label 
+    RETURN DISTINCT label
+    """
+    mock_session.run.assert_called_once_with(expected_query)
