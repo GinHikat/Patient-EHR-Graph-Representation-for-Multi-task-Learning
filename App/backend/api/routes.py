@@ -22,8 +22,12 @@ def get_node_types():
     return {"node_types": labels}
 
 @router.get("/node/{node_id}", response_model=GraphResponse)
-def search_node(node_id: str, namespace: Optional[str] = Query(None)):
-    data = get_node_by_id(node_id, namespace)
+def search_node(
+    node_id: str, 
+    namespace: Optional[str] = Query(None),
+    node_types: Optional[List[str]] = Query(None, alias="node_type")
+):
+    data = get_node_by_id(node_id, namespace, node_types)
     if not data:
         raise HTTPException(status_code=404, detail="Node not found")
     return data

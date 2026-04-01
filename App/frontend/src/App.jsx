@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import GraphViewer from "./components/GraphViewer";
 import axios from "axios";
-import { Info, Database, ChevronDown, ChevronRight } from "lucide-react";
+import { Info, Database, ChevronDown, ChevronRight, Sun, Moon } from "lucide-react";
 import "./index.css";
 
 const HierarchyItem = ({
@@ -60,6 +60,17 @@ function App() {
     edge_breakdown: [],
   });
   const [externalFilter, setExternalFilter] = useState(null);
+  const [theme, setTheme] = useState(localStorage.getItem("theme") || "dark");
+
+  // Handle theme persistence
+  useEffect(() => {
+    document.body.className = theme === "light" ? "light-theme" : "";
+    localStorage.setItem("theme", theme);
+  }, [theme]);
+
+  const toggleTheme = () => {
+    setTheme(theme === "dark" ? "light" : "dark");
+  };
 
   // Automatically detect hierarchy based on label frequency and mutual exclusion
   const detectedHierarchy = useMemo(() => {
@@ -177,6 +188,14 @@ function App() {
           >
             Settings
           </button>
+          
+          <button
+            className={`theme-toggle-btn ${theme === "light" ? "active" : ""}`}
+            onClick={toggleTheme}
+            title={theme === "light" ? "Switch to Dark Mode" : "Switch to Light Mode"}
+          >
+            {theme === "light" ? <Moon size={18} /> : <Sun size={18} />}
+          </button>
         </nav>
       </header>
 
@@ -237,6 +256,7 @@ function App() {
           <GraphViewer
             externalFilter={externalFilter}
             onFilterUsed={() => setExternalFilter(null)}
+            theme={theme}
           />
         ) : (
           <div className="coming-soon glass-panel">

@@ -25,7 +25,15 @@ const TYPE_COLORS = {
 };
 
 // Generate high-contrast colors based on string
+const getEffectiveLabel = (labels) => {
+  if (!labels || labels.length === 0) return "Unknown";
+  // Filter out meta-labels that shouldn't define the color
+  const clinicalLabels = labels.filter(l => l !== "MIMIC" && l !== "External" && l !== "Test");
+  return clinicalLabels.length > 0 ? clinicalLabels[0] : labels[0];
+};
+
 const getColor = (str) => {
+  if (!str || str === "Unknown") return "#94a3b8";
   if (TYPE_COLORS[str]) return TYPE_COLORS[str];
 
   let hash = 0;
@@ -39,7 +47,11 @@ const getColor = (str) => {
   return `hsl(${h}, 85%, 65%)`;
 };
 
-const GraphViewer = ({ externalFilter, onFilterUsed }) => {
+const GraphViewer = ({
+  externalFilter,
+  onFilterUsed,
+  theme = "dark",
+}) => {
   const [graphData, setGraphData] = useState({ nodes: [], links: [] });
   const [nodeTypes, setNodeTypes] = useState(["All"]);
   const [selectedTypes, setSelectedTypes] = useState(["All"]);
@@ -58,6 +70,44 @@ const GraphViewer = ({ externalFilter, onFilterUsed }) => {
 
   const [selectedRels, setSelectedRels] = useState([]);
   const [showControls, setShowControls] = useState(true);
+  const [panelWidth, setPanelWidth] = useState(300);
+  const [isResizing, setIsResizing] = useState(false);
+
+  // Custom resizing logic
+  const startResizing = useCallback((e) => {
+    e.preventDefault();
+    setIsResizing(true);
+  }, []);
+
+  const stopResizing = useCallback(() => {
+    setIsResizing(false);
+  }, []);
+
+  const resize = useCallback(
+    (e) => {
+      if (isResizing) {
+        const newWidth = e.clientX - 24; // 24 is the left margin
+        if (newWidth >= 200 && newWidth <= 600) {
+          setPanelWidth(newWidth);
+        }
+      }
+    },
+    [isResizing],
+  );
+
+  useEffect(() => {
+    if (isResizing) {
+      window.addEventListener("mousemove", resize);
+      window.addEventListener("mouseup", stopResizing);
+    } else {
+      window.removeEventListener("mousemove", resize);
+      window.removeEventListener("mouseup", stopResizing);
+    }
+    return () => {
+      window.removeEventListener("mousemove", resize);
+      window.removeEventListener("mouseup", stopResizing);
+    };
+  }, [isResizing, resize, stopResizing]);
 
   // Handle external filter from Stats Pane
   useEffect(() => {
@@ -88,8 +138,10 @@ const GraphViewer = ({ externalFilter, onFilterUsed }) => {
     fetchNodeTypes();
   }, []);
 
-  // Fetch graph data when filters change
+  // Fetch graph data when filters change (only if not searching)
   useEffect(() => {
+    if (searchId.trim()) return; // Don't fetch global sample if we are searching
+
     const fetchGraph = async () => {
       setLoading(true);
       try {
@@ -119,20 +171,29 @@ const GraphViewer = ({ externalFilter, onFilterUsed }) => {
     }, 300);
 
     return () => clearTimeout(timer);
-  }, [nodeLimit, selectedTypes]);
+  }, [nodeLimit, selectedTypes, searchId]);
 
   const handleSearchNode = async (e) => {
     e.preventDefault();
-    
+
     // Always apply pending node types when clicking the main Find button
     applyFilters();
+
+    // Clear highlights when doing a fresh search
+    setHighlightNodes(new Set());
+    setHighlightLinks(new Set());
 
     if (!searchId.trim()) return;
 
     setSearchLoading(true);
     try {
+      const params = new URLSearchParams();
+      if (!pendingTypes.includes("All")) {
+        pendingTypes.forEach((type) => params.append("node_type", type));
+      }
+
       const response = await axios.get(
-        `${API_BASE_URL}/node/${searchId.trim()}`,
+        `${API_BASE_URL}/node/${searchId.trim()}?${params.toString()}`,
       );
       if (response.data && response.data.nodes.length > 0) {
         const newData = response.data;
@@ -324,16 +385,43 @@ const GraphViewer = ({ externalFilter, onFilterUsed }) => {
         </div>
       )}
 
-      <button
-        className={`controls-toggle-btn glass-panel ${showControls ? "active" : ""}`}
-        onClick={() => setShowControls(!showControls)}
-        title={showControls ? "Hide Filters" : "Show Filters"}
+      <div
+        className={`controls-panel-container ${showControls ? "active" : ""}`}
+        style={{
+          width: showControls ? `${panelWidth}px` : "0px",
+          left: "16px",
+          top: "16px",
+          bottom: "16px",
+          position: "absolute",
+          zIndex: 15,
+        }}
       >
-        {showControls ? <ChevronLeft size={20} /> : <Filter size={20} />}
-      </button>
+        <button
+          className={`controls-toggle-btn glass-panel ${showControls ? "active" : ""}`}
+          onClick={() => setShowControls(!showControls)}
+          title={showControls ? "Hide Filters" : "Show Filters"}
+          style={{
+            left: showControls ? `${panelWidth + 4}px` : "0px",
+            position: "absolute",
+            top: "0px",
+            margin: 0, /* ensure no default margin push */
+          }}
+        >
+          {showControls ? <ChevronLeft size={20} /> : <Filter size={20} />}
+        </button>
 
-      {showControls && (
-        <div className="controls-panel glass-panel animate-slide-right">
+        {showControls && (
+          <div
+            className="controls-panel glass-panel animate-slide-right"
+            style={{ 
+              width: "100%", 
+              height: "100%", 
+              position: "relative",
+              margin: 0 
+            }}
+          >
+            {/* Resize handle for the whole right border */}
+            <div className="resize-handle-area" onMouseDown={startResizing} />
           <div className="control-group">
             <div className="search-pane">
               <label>Search by ID / Name</label>
@@ -392,37 +480,40 @@ const GraphViewer = ({ externalFilter, onFilterUsed }) => {
           {/* Dynamic Legend based on visible nodes */}
           <div className="legend">
             <label
-              style={{ fontSize: "0.75rem", marginBottom: "8px", opacity: 0.8 }}
+              style={{ fontSize: "0.75rem", marginBottom: "4px", fontWeight: 700 }}
             >
               All Types
             </label>
-            {nodeTypes
-              .filter((type) => type !== "All" && type !== "Test")
-              .map((label) => (
-                <div key={label} className="legend-item">
-                  <div
-                    className="legend-color"
-                    style={{ backgroundColor: getColor(label) }}
-                  ></div>
-                  <span>{label}</span>
-                </div>
-              ))}
+            <div className="legend-grid">
+              {nodeTypes
+                .filter((type) => type !== "All" && type !== "Test")
+                .map((label) => (
+                  <div key={label} className="legend-item" title={label}>
+                    <div
+                      className="legend-color"
+                      style={{ backgroundColor: getColor(label) }}
+                    ></div>
+                    <span>{label}</span>
+                  </div>
+                ))}
+            </div>
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       <ForceGraph2D
         ref={fgRef}
         graphData={graphData}
         nodeLabel={(node) => `
           <div style="background: rgba(0,0,0,0.9); padding: 12px; border-radius: 8px; font-family: Inter, sans-serif; box-shadow: 0 4px 20px rgba(0,0,0,0.5); min-width: 140px; border: 1px solid rgba(255,255,255,0.1);">
-             <div style="color: #60a5fa; font-size: 12px; font-weight: 600; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.8;">${node.labels?.filter((l) => l !== "Test")[0] || "Node"}</div>
+             <div style="color: #60a5fa; font-size: 12px; font-weight: 600; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.8;">${getEffectiveLabel(node.labels)}</div>
              <div style="font-weight: 700; color: white; font-size: 16px; line-height: 1.4;">${node.properties?.name || node.properties?.title || node.properties?.Title || node.id}</div>
           </div>
         `}
         nodeRelSize={7}
         nodeCanvasObject={(node, ctx, globalScale) => {
-          const label = node.labels?.[0] || "Unknown";
+          const label = getEffectiveLabel(node.labels);
           const isHighlighted =
             highlightNodes.size === 0 || highlightNodes.has(node);
           const isHovered = hoverNode === node;
@@ -440,6 +531,14 @@ const GraphViewer = ({ externalFilter, onFilterUsed }) => {
             ctx.fillStyle = isHovered
               ? "rgba(255, 255, 255, 0.3)"
               : "rgba(0, 0, 0, 0.3)";
+            ctx.fill();
+          }
+
+          // Soft shadow for Light Mode
+          if (theme === "light") {
+            ctx.beginPath();
+            ctx.arc(node.x + 0.5/globalScale, node.y + 0.5/globalScale, radius + 1, 0, 2 * Math.PI, false);
+            ctx.fillStyle = "rgba(0, 0, 0, 0.15)";
             ctx.fill();
           }
 
@@ -463,12 +562,14 @@ const GraphViewer = ({ externalFilter, onFilterUsed }) => {
           ctx.arc(node.x, node.y, 7, 0, 2 * Math.PI, false);
           ctx.fill();
         }}
-        linkWidth={(link) => (highlightLinks.has(link) ? 3 : 1)}
-        linkColor={(link) =>
-          highlightLinks.has(link)
-            ? "rgba(59, 130, 246, 0.8)"
-            : "rgba(255, 255, 255, 0.2)"
-        }
+        linkWidth={(link) => (highlightLinks.has(link) ? 5 : 4)}
+        linkColor={(link) => {
+          if (highlightLinks.has(link)) return "rgba(59, 130, 246, 0.9)";
+          return theme === "light" 
+            ? "rgba(0, 0, 0, 0.4)" // darker black in light mode
+            : "rgba(255, 255, 255, 0.2)";
+        }}
+        linkDirectionalArrowLength={0.1}
         linkDirectionalParticles={(link) => (highlightLinks.has(link) ? 4 : 0)}
         linkDirectionalParticleWidth={4}
         linkLabel={(link) => `
@@ -482,26 +583,58 @@ const GraphViewer = ({ externalFilter, onFilterUsed }) => {
           const start = link.source;
           const end = link.target;
           if (typeof start !== "object" || typeof end !== "object") return;
-          const textPos = Object.assign(
-            ...["x", "y"].map((c) => ({
-              [c]: start[c] + (end[c] - start[c]) / 2,
-            })),
-          );
+
+          // 1. Draw smaller, sharp text at the CENTER
+          const textPos = {
+            x: start.x + (end.x - start.x) * 0.5,
+            y: start.y + (end.y - start.y) * 0.5
+          };
+
           const relLink = { x: end.x - start.x, y: end.y - start.y };
+          const linkLen = Math.hypot(relLink.x, relLink.y);
           let textAngle = Math.atan2(relLink.y, relLink.x);
+          
           if (textAngle > Math.PI / 2) textAngle = -(Math.PI - textAngle);
           if (textAngle < -Math.PI / 2) textAngle = -(-Math.PI - textAngle);
-          ctx.font = `6px Inter, sans-serif`;
+
+          const isHighlighted = highlightLinks.has(link);
+          const color = isHighlighted
+            ? (theme === "light" ? "rgba(37, 99, 235, 1)" : "rgba(96, 165, 250, 1)")
+            : (theme === "light" ? "rgba(0, 0, 0, 0.5)" : "rgba(255, 255, 255, 0.4)");
+
+          // Draw Text
           ctx.save();
           ctx.translate(textPos.x, textPos.y);
           ctx.rotate(textAngle);
+          ctx.font = `3px Inter, sans-serif`; // microscopic font
           ctx.textAlign = "center";
           ctx.textBaseline = "middle";
-          ctx.fillStyle = highlightLinks.has(link)
-            ? "rgba(96, 165, 250, 1)"
-            : "rgba(255, 255, 255, 0.4)";
-          ctx.fillText(link.type, 0, -2);
+          ctx.fillStyle = color;
+          ctx.fillText(link.type, 0, -3); 
           ctx.restore();
+
+          // 2. Draw a VERY SMALL, SHARP arrow head at the TARGET node boundary (radius=6)
+          if (linkLen > 6) {
+            const nodeRadius = 6;
+            const arrowLen = 3;
+            const arrowWidth = 2.5; 
+            const tipPos = {
+              x: end.x - (relLink.x / linkLen) * nodeRadius,
+              y: end.y - (relLink.y / linkLen) * nodeRadius
+            };
+
+            ctx.save();
+            ctx.translate(tipPos.x, tipPos.y);
+            ctx.rotate(Math.atan2(relLink.y, relLink.x));
+            ctx.beginPath();
+            ctx.moveTo(0, 0); // tip
+            ctx.lineTo(-arrowLen, -arrowWidth);
+            ctx.lineTo(-arrowLen, arrowWidth);
+            ctx.closePath();
+            ctx.fillStyle = color;
+            ctx.fill();
+            ctx.restore();
+          }
         }}
         onNodeClick={handleNodeClick}
         onNodeHover={handleNodeHover}
@@ -512,7 +645,17 @@ const GraphViewer = ({ externalFilter, onFilterUsed }) => {
       />
 
       {selectedNode && (
-        <div className="node-info-panel glass-panel">
+        <div 
+          className="node-info-panel glass-panel" 
+          style={{ 
+            top: "16px", 
+            bottom: "16px", 
+            right: "16px", 
+            width: "320px", 
+            padding: "24px", 
+            position: "absolute" 
+          }}
+        >
           <div className="node-info-header">
             <div>
               <h2>
@@ -575,7 +718,17 @@ const GraphViewer = ({ externalFilter, onFilterUsed }) => {
       )}
 
       {selectedLink && (
-        <div className="node-info-panel glass-panel link-info-panel">
+        <div 
+          className="node-info-panel glass-panel link-info-panel"
+          style={{ 
+            top: "16px", 
+            bottom: "16px", 
+            right: "16px", 
+            width: "320px", 
+            padding: "24px", 
+            position: "absolute" 
+          }}
+        >
           <div className="node-info-header">
             <div>
               <div className="node-info-category">Relationship Info</div>

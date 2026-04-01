@@ -150,30 +150,41 @@ def get_graph_data(limit: int, node_types: list[str] = None, edge_types: list[st
 
     return {"nodes": list(nodes.values()), "links": links}
 
-def get_node_by_id(node_id: str, namespace: str = None):
+def get_node_by_id(node_id: str, namespace: str = None, node_types: list[str] = None):
     driver = get_db_driver()
-    # If no specific namespace is provided, search across all nodes.
-    # Otherwise, filter by both the namespace label and searching criteria.
     label_part = f"n:`{namespace}`" if namespace else "TRUE"
     
+    # Heuristic: if input is mostly text/special chars, use CONTAINS. If mostly digits, STARTS WITH.
+    import re
+    letters = len(re.findall(r'[a-zA-Z]', node_id))
+    digits = len(re.findall(r'[0-9]', node_id))
+    # Use CONTAINS if more text than digits, else STARTS WITH (better for IDs)
+    op = "CONTAINS" if letters > digits else "STARTS WITH"
+    
+    # Check if we are filtering by categories
+    is_filtered = bool(node_types and "All" not in node_types and len(node_types) > 0)
+    target_labels = node_types if node_types else []
+
     query = f"""
     MATCH (n)
     WHERE {label_part}
     AND (
        elementId(n) = $node_id 
        OR toString(n.id) = $node_id 
+       OR toLower(toString(n.id)) {op} toLower($node_id)
        OR toLower(toString(n.name)) CONTAINS toLower($node_id) 
        OR toLower(toString(n.title)) CONTAINS toLower($node_id)
        OR toLower(toString(n.Title)) CONTAINS toLower($node_id)
     )
-    WITH n LIMIT 10
+    WITH n LIMIT 20
     OPTIONAL MATCH (n)-[r]-(m)
+    WHERE NOT $is_filtered OR any(l IN labels(m) WHERE l IN $target_labels)
     RETURN n, r, m
     LIMIT 300
     """
     
     with driver.session() as session:
-        result = session.run(query, node_id=node_id)
+        result = session.run(query, node_id=node_id, target_labels=target_labels, is_filtered=is_filtered)
         nodes = {}
         links = []
         
@@ -181,7 +192,8 @@ def get_node_by_id(node_id: str, namespace: str = None):
             n = record["n"]
             if n:
                 elem_id = n.element_id if hasattr(n, "element_id") else str(getattr(n, "id", str(n)))
-                nodes[elem_id] = {"id": elem_id, "labels": list(n.labels), "properties": serialize_properties(dict(n))}
+                if elem_id not in nodes:
+                    nodes[elem_id] = {"id": elem_id, "labels": list(n.labels), "properties": serialize_properties(dict(n))}
             
             m = record.get("m")
             if m:
