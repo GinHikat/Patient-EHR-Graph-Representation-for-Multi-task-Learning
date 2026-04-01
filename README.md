@@ -24,41 +24,6 @@ A research project that constructs a structured **Knowledge Graph** from patient
 
 ---
 
-## 🏗️ System Architecture
-
-```mermaid
-graph TD;
-    subgraph Frontend ["React Frontend — Port 5173"]
-        UI[React UI]
-        GraphLib[React Force Graph 2D]
-        UI --> GraphLib
-    end
-
-    subgraph Backend ["FastAPI Backend — Port 8000"]
-        Router[API Routes]
-        Service[Graph Services]
-        Validator[Pydantic Schemas]
-        DBConfig[Core DB Configuration]
-        Router --> Service
-        Router --> Validator
-        Service --> DBConfig
-    end
-
-    subgraph Database
-        Neo4j[(Neo4j Instance)]
-    end
-
-    subgraph Modules
-        Preprocess[dataset_preprocessing]
-        GraphBuild[graph_construction]
-        Preprocess --> GraphBuild
-        GraphBuild --> Neo4j
-    end
-
-    UI -- HTTP requests --> Router
-    DBConfig -- Bolt Protocol --> Neo4j
-```
-
 ### Components Summary
 
 | Layer | Technology | Role |
