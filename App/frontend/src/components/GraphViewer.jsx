@@ -43,6 +43,7 @@ const GraphViewer = ({ externalFilter, onFilterUsed }) => {
   const [graphData, setGraphData] = useState({ nodes: [], links: [] });
   const [nodeTypes, setNodeTypes] = useState(["All"]);
   const [selectedTypes, setSelectedTypes] = useState(["All"]);
+  const [pendingTypes, setPendingTypes] = useState(["All"]);
   const [nodeLimit, setNodeLimit] = useState(100);
   const [loading, setLoading] = useState(false);
   const [selectedNode, setSelectedNode] = useState(null);
@@ -63,9 +64,11 @@ const GraphViewer = ({ externalFilter, onFilterUsed }) => {
     if (externalFilter) {
       if (externalFilter.category === "node") {
         setSelectedTypes([externalFilter.type]);
+        setPendingTypes([externalFilter.type]);
         setSelectedRels([]);
       } else {
         setSelectedTypes(["All"]);
+        setPendingTypes(["All"]);
         setSelectedRels([externalFilter.type]);
       }
       if (onFilterUsed) onFilterUsed();
@@ -120,6 +123,10 @@ const GraphViewer = ({ externalFilter, onFilterUsed }) => {
 
   const handleSearchNode = async (e) => {
     e.preventDefault();
+    
+    // Always apply pending node types when clicking the main Find button
+    applyFilters();
+
     if (!searchId.trim()) return;
 
     setSearchLoading(true);
@@ -190,9 +197,9 @@ const GraphViewer = ({ externalFilter, onFilterUsed }) => {
 
   const toggleType = (type) => {
     if (type === "All") {
-      setSelectedTypes(["All"]);
+      setPendingTypes(["All"]);
     } else {
-      setSelectedTypes((prev) => {
+      setPendingTypes((prev) => {
         const newTypes = prev.filter((t) => t !== "All");
         if (newTypes.includes(type)) {
           const updated = newTypes.filter((t) => t !== type);
@@ -202,6 +209,10 @@ const GraphViewer = ({ externalFilter, onFilterUsed }) => {
         }
       });
     }
+  };
+
+  const applyFilters = () => {
+    setSelectedTypes([...pendingTypes]);
   };
 
   const handleNodeClick = useCallback(
@@ -346,12 +357,14 @@ const GraphViewer = ({ externalFilter, onFilterUsed }) => {
           </div>
 
           <div className="control-group">
-            <label>Filter by Node Type</label>
+            <div className="filter-header">
+              <label>Filter by Node Type</label>
+            </div>
             <div className="type-badges">
               {nodeTypes.map((type) => (
                 <button
                   key={type}
-                  className={`type-badge ${selectedTypes.includes(type) ? "active" : ""}`}
+                  className={`type-badge ${pendingTypes.includes(type) ? "active" : ""}`}
                   onClick={() => toggleType(type)}
                 >
                   {type}
@@ -560,7 +573,7 @@ const GraphViewer = ({ externalFilter, onFilterUsed }) => {
           </div>
         </div>
       )}
-      
+
       {selectedLink && (
         <div className="node-info-panel glass-panel link-info-panel">
           <div className="node-info-header">
@@ -568,12 +581,24 @@ const GraphViewer = ({ externalFilter, onFilterUsed }) => {
               <div className="node-info-category">Relationship Info</div>
               <h2>{selectedLink.type}</h2>
               <div className="link-direction">
-                <span className="node-label" style={{ borderLeft: "3px solid #60a5fa" }}>
-                  {typeof selectedLink.source === 'object' ? (selectedLink.source.properties?.name || selectedLink.source.id) : selectedLink.source}
+                <span
+                  className="node-label"
+                  style={{ borderLeft: "3px solid #60a5fa" }}
+                >
+                  {typeof selectedLink.source === "object"
+                    ? selectedLink.source.properties?.name ||
+                      selectedLink.source.id
+                    : selectedLink.source}
                 </span>
                 <span className="arrow">→</span>
-                <span className="node-label" style={{ borderLeft: "3px solid #f43f5e" }}>
-                   {typeof selectedLink.target === 'object' ? (selectedLink.target.properties?.name || selectedLink.target.id) : selectedLink.target}
+                <span
+                  className="node-label"
+                  style={{ borderLeft: "3px solid #f43f5e" }}
+                >
+                  {typeof selectedLink.target === "object"
+                    ? selectedLink.target.properties?.name ||
+                      selectedLink.target.id
+                    : selectedLink.target}
                 </span>
               </div>
             </div>
@@ -583,16 +608,23 @@ const GraphViewer = ({ externalFilter, onFilterUsed }) => {
           </div>
 
           <div className="property-list">
-            {Object.entries(selectedLink.properties || {}).map(([key, value]) => (
-              <div key={key} className="property-item">
-                <span className="prop-key">{key}</span>
-                <span className="prop-value">
-                  {typeof value === "object" ? JSON.stringify(value) : String(value)}
-                </span>
-              </div>
-            ))}
+            {Object.entries(selectedLink.properties || {}).map(
+              ([key, value]) => (
+                <div key={key} className="property-item">
+                  <span className="prop-key">{key}</span>
+                  <span className="prop-value">
+                    {typeof value === "object"
+                      ? JSON.stringify(value)
+                      : String(value)}
+                  </span>
+                </div>
+              ),
+            )}
             {Object.keys(selectedLink.properties || {}).length === 0 && (
-              <div className="prop-value" style={{ opacity: 0.5, padding: "10px 0" }}>
+              <div
+                className="prop-value"
+                style={{ opacity: 0.5, padding: "10px 0" }}
+              >
                 No attributes for this relationship
               </div>
             )}

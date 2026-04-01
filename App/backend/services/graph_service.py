@@ -161,12 +161,10 @@ def get_node_by_id(node_id: str, namespace: str = None):
     WHERE {label_part}
     AND (
        elementId(n) = $node_id 
-       OR n.id = $node_id 
-       OR toLower(n.name) CONTAINS toLower($node_id) 
-       OR toLower(n.title) CONTAINS toLower($node_id)
-       OR toLower(n.Title) CONTAINS toLower($node_id)
-       OR toLower(n.Title) CONTAINS toLower($node_id)
-       OR toLower(n.name) CONTAINS toLower($node_id)
+       OR toString(n.id) = $node_id 
+       OR toLower(toString(n.name)) CONTAINS toLower($node_id) 
+       OR toLower(toString(n.title)) CONTAINS toLower($node_id)
+       OR toLower(toString(n.Title)) CONTAINS toLower($node_id)
     )
     WITH n LIMIT 10
     OPTIONAL MATCH (n)-[r]-(m)

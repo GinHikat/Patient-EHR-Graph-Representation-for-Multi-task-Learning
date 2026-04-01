@@ -229,6 +229,37 @@ body {
   letter-spacing: 0.5px;
 }
 
+.filter-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.apply-filter-btn {
+  background: var(--accent-color);
+  color: white;
+  border: none;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  cursor: pointer;
+  text-transform: uppercase;
+  transition: all 0.2s ease;
+  box-shadow: 0 0 10px rgba(59, 130, 246, 0.2);
+}
+
+.apply-filter-btn:hover {
+  background: var(--accent-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 0 15px rgba(59, 130, 246, 0.4);
+}
+
+.apply-filter-btn:active {
+  transform: translateY(0);
+}
+
 .node-info-panel {
   position: absolute;
   right: 24px;
