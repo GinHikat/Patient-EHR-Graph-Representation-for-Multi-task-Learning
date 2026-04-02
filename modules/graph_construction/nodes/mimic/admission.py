@@ -168,3 +168,53 @@ adm['length_of_stay'] = (adm['dischtime'] - adm['admittime']).dt.total_seconds()
             progress=False,
             rows=rows
         )
+
+####### Enrich Admission node with drg codes
+    drgcode = read_full('hosp', 'drgcodes')
+
+    title(drgcode, 'description')
+    drgcode['description'] = drgcode['description'].apply(lambda x: x.replace(',', ', '))
+
+    # Before that, deal with Admission with both APR and HACF code, prioritise APR
+        apr = drgcode[drgcode['drg_type'] == 'APR'].drop_duplicates(subset='hadm_id', keep='first')
+        hcfa = drgcode[drgcode['drg_type'] == 'HCFA'].drop_duplicates(subset='hadm_id', keep='first')
+
+        # APR takes priority, HCFA fills in the rest
+        drg = pd.concat([
+            apr,
+            hcfa[~hcfa['hadm_id'].isin(apr['hadm_id'])]  # only HCFA-only admissions
+        ])
+
+    query = """
+        UNWIND $rows AS row
+
+        MATCH(d:Admission:Test {id: row.hadm_id})
+        SET d.drg_type = row.drg_type, 
+            d.drg_code = row.drg_code,
+            d.drg_description = row.description,
+            d.drg_severity = row.drg_severity,
+            d.drg_mortality = row.drg_mortality
+        """
+
+    # Process in batches
+    for i in tqdm(range(start_idx, len(drg), BATCH_SIZE), desc="Batch processing"):
+
+        batch = drg.iloc[i:i+BATCH_SIZE]
+
+        rows = []
+        for _, row in batch.iterrows():
+            rows.append({
+                "hadm_id": row["hadm_id"],
+                'drg_type': row['drg_type'],
+                'drg_code': row['drg_code'],
+                'description': row['description'],
+                'drg_severity': row['drg_severity'] if row['drg_severity'] else None,
+                'drg_mortality': row['drg_mortality'] if row['drg_mortality'] else None
+            })
+
+        dml_ddl_neo4j(
+            query,
+            progress=False,
+            rows=rows
+        )
+
