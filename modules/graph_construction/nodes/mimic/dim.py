@@ -136,7 +136,7 @@ BATCH_SIZE = 500
     query = """
         UNWIND $rows AS row
 
-        MERGE (d:Test:Item:MIMIC:ICU {id: row.itemid})
+        MERGE (d:ICU:Item:Test:MIMIC {id: row.itemid})
         SET d.name = row.label,
             d.category = row.category,
             d.alias = row.alias,

@@ -1,14 +1,17 @@
 import React, { useState, useEffect, useMemo } from "react";
 import GraphViewer from "./components/GraphViewer";
 import axios from "axios";
-import { Info, Database, ChevronDown, ChevronRight, Sun, Moon } from "lucide-react";
+import {
+  Info,
+  Database,
+  ChevronDown,
+  ChevronRight,
+  Sun,
+  Moon,
+} from "lucide-react";
 import "./index.css";
 
-const HierarchyItem = ({
-  item,
-  onTypeClick,
-  depth = 0,
-}) => {
+const HierarchyItem = ({ item, onTypeClick, depth = 0 }) => {
   const [isOpen, setIsOpen] = useState(depth < 2); // Auto-expand top levels
 
   if (item.count === 0 && !item.children) return null;
@@ -82,11 +85,14 @@ function App() {
       "Test",
       "External",
       "MIMIC",
+      "Admission",
+      "Patient",
+      "ICU",
       "Disease",
       "Drug",
-      "Patient",
       "Diagnosis",
       "Procedure",
+      "Stay",
       "Lab",
       "Item",
     ];
@@ -188,11 +194,13 @@ function App() {
           >
             Settings
           </button>
-          
+
           <button
             className={`theme-toggle-btn ${theme === "light" ? "active" : ""}`}
             onClick={toggleTheme}
-            title={theme === "light" ? "Switch to Dark Mode" : "Switch to Light Mode"}
+            title={
+              theme === "light" ? "Switch to Dark Mode" : "Switch to Light Mode"
+            }
           >
             {theme === "light" ? <Moon size={18} /> : <Sun size={18} />}
           </button>

@@ -47,7 +47,7 @@ BATCH_SIZE = 500
 
         MERGE (d:Patient:Test:MIMIC {id: row.id})
         SET d.gender = row.gender,
-            d.nane = row.id,
+            d.name = row.id,
             d.age = row.age,
             d.first_adm = row.first_adm,
             d.offset = row.offset,
