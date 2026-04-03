@@ -4,6 +4,8 @@ import re
 from tqdm import tqdm
 import json
 from collections import defaultdict
+import itertools
+from concurrent.futures import ThreadPoolExecutor
 
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if project_root not in sys.path:
@@ -14,9 +16,39 @@ from shared_functions.global_functions import query_neo4j, driver, DATABASE, dml
 
 data_dir = os.path.join(project_root, 'data')
 
+def process_node_batch(batch, all_keys):
+    """Normalize a batch of node records."""
+    rows = []
+    for record in batch:
+        row = {
+            "id": record["id"],
+            "labels": ":".join(record["labels"])
+        }
+        props = record["props"]
+        for key in all_keys:
+            row[key] = props.get(key, None)
+        rows.append(row)
+    return rows
+
+def process_edge_batch(batch, all_edge_keys):
+    """Normalize a batch of edge records."""
+    edge_rows = []
+    for record in batch:
+        row = {
+            "source": record["source"],
+            "target": record["target"],
+            "type": record["type"]
+        }
+        props = record["props"]
+        for key in all_edge_keys:
+            row[key] = props.get(key, None)
+        edge_rows.append(row)
+    return edge_rows
+
 def snapshot_node(namespace='Test'):
     '''
     Take a snapshot of all nodes properties in the specific namespace for backup
+    Using concurrent streaming batches to avoid memory explosion.
 
     Input: 
         namespace: label of nodes, working as namespace of the Graph to separate between different universes
@@ -29,49 +61,76 @@ def snapshot_node(namespace='Test'):
         raise ValueError("Invalid label name")
 
     # Total count for progress bar
-    count_query = f"""
-    MATCH (n:{namespace})
-    RETURN count(n) AS total
-    """
+    print(f"Querying node count for '{namespace}'...")
+    count_query = f"MATCH (n:{namespace}) RETURN count(n) AS total"
     total = query_neo4j(count_query)[0]["total"]
+    
+    if total == 0:
+        print(f"No nodes found for namespace {namespace}")
+        return
 
-    # Fetch nodes
+    # Efficiently collect all possible property keys using Cypher
+    print("Identifying property keys (scanning distinct key sets)...")
+    keys_query = f"MATCH (n:{namespace}) RETURN DISTINCT keys(n) AS key_set"
+    res = query_neo4j(keys_query)
+    all_keys = set()
+    for row in res:
+        all_keys.update(row["key_set"])
+    all_keys = sorted(list(all_keys))
+    columns = ["id", "labels"] + all_keys
+
+    # Fetch nodes in a stream
     query_nodes = f"""
     MATCH (n:{namespace})
     RETURN n.id AS id, labels(n) AS labels, properties(n) AS props
     """
-    node_records = query_neo4j(query_nodes)
+    
+    output_path = os.path.join(data_dir, "nodes.csv")
+    batch_size = 10000
+    num_workers = 4
 
-    # Collect all possible property keys
-    all_keys = set()
-    for record in tqdm(node_records, desc="Collecting keys", total=total):
-        all_keys.update(record["props"].keys())
+    # Initialize CSV with header
+    pd.DataFrame(columns=columns).to_csv(output_path, index=False)
 
-    all_keys = sorted(all_keys)
+    with driver.session(database=DATABASE) as session:
+        result = session.run(query_nodes)
+        
+        with tqdm(total=total, desc=f"Snapshotting {namespace} Nodes") as pbar:
+            with ThreadPoolExecutor(max_workers=num_workers) as executor:
+                futures = []
+                while True:
+                    # Pull batch from Neo4j
+                    batch_data = []
+                    for _ in range(batch_size):
+                        try:
+                            record = next(result)
+                            batch_data.append(record.data())
+                            pbar.update(1)
+                        except StopIteration:
+                            break
+                    
+                    if not batch_data:
+                        break
+                    
+                    # Process and write
+                    futures.append(executor.submit(process_node_batch, batch_data, all_keys))
+                    
+                    # Flush oldest completed future to disk
+                    if len(futures) >= num_workers * 2:
+                        res_rows = futures.pop(0).result()
+                        pd.DataFrame(res_rows, columns=columns).to_csv(output_path, mode='a', header=False, index=False)
+                
+                # Write remaining batches
+                for f in futures:
+                    res_rows = f.result()
+                    pd.DataFrame(res_rows, columns=columns).to_csv(output_path, mode='a', header=False, index=False)
 
-    # Normalize nodes
-    rows = []
-    for record in tqdm(node_records, desc="Processing nodes", total=total):
-        row = {
-            "id": record["id"],
-            "labels": ":".join(record["labels"])
-        }
-
-        props = record["props"]
-        for key in all_keys:
-            row[key] = props.get(key, None)
-
-        rows.append(row)
-
-    # Save CSV
-    df_nodes = pd.DataFrame(rows)
-    df_nodes.to_csv(os.path.join(data_dir, "nodes.csv"), index=False)
-
-    print("Nodes CSV saved as nodes.csv")
+    print(f"Nodes CSV saved: {output_path}")
 
 def snapshot_edge(namespace='Test'):
     '''
     Take a snapshot of all edges in the specific namespace for backup
+    Using concurrent streaming batches to avoid memory explosion.
 
     Input: 
         namespace: label of nodes, working as namespace of the Graph to separate between different universes
@@ -84,11 +143,23 @@ def snapshot_edge(namespace='Test'):
         raise ValueError("Invalid label name")
 
     # Total count for progress bar
-    count_query = f"""
-    MATCH (a:{namespace})-[r]->(b:{namespace})
-    RETURN count(r) AS total
-    """
+    print(f"Querying edge count for '{namespace}'...")
+    count_query = f"MATCH (a:{namespace})-[r]->(b:{namespace}) RETURN count(r) AS total"
     total = query_neo4j(count_query)[0]["total"]
+
+    if total == 0:
+        print(f"No edges found for namespace {namespace}")
+        return
+
+    # Efficiently collect all relationship property keys using Cypher
+    print("Identifying edge property keys (scanning distinct key sets)...")
+    keys_query = f"MATCH (a:{namespace})-[r]->(b:{namespace}) RETURN DISTINCT keys(r) AS key_set"
+    res = query_neo4j(keys_query)
+    all_edge_keys = set()
+    for row in res:
+        all_edge_keys.update(row["key_set"])
+    all_edge_keys = sorted(list(all_edge_keys))
+    columns = ["source", "target", "type"] + all_edge_keys
 
     # Fetch edges
     query_edges = f"""
@@ -99,35 +170,48 @@ def snapshot_edge(namespace='Test'):
         type(r) AS type,
         properties(r) AS props
     """
+    
+    output_path = os.path.join(data_dir, "edges.csv")
+    batch_size = 10000
+    num_workers = 4
 
-    edge_records = query_neo4j(query_edges)
+    # Initialize CSV with header
+    pd.DataFrame(columns=columns).to_csv(output_path, index=False)
 
-    # Collect all relationship property keys
-    all_edge_keys = set()
-    for record in tqdm(edge_records, desc="Collecting edge keys", total=total):
-        all_edge_keys.update(record["props"].keys())
+    with driver.session(database=DATABASE) as session:
+        result = session.run(query_edges)
+        
+        with tqdm(total=total, desc=f"Snapshotting {namespace} Edges") as pbar:
+            with ThreadPoolExecutor(max_workers=num_workers) as executor:
+                futures = []
+                while True:
+                    # Pull batch from Neo4j
+                    batch_data = []
+                    for _ in range(batch_size):
+                        try:
+                            record = next(result)
+                            batch_data.append(record.data())
+                            pbar.update(1)
+                        except StopIteration:
+                            break
+                    
+                    if not batch_data:
+                        break
+                    
+                    # Process and write
+                    futures.append(executor.submit(process_edge_batch, batch_data, all_edge_keys))
+                    
+                    # Flush oldest completed future to disk
+                    if len(futures) >= num_workers * 2:
+                        res_rows = futures.pop(0).result()
+                        pd.DataFrame(res_rows, columns=columns).to_csv(output_path, mode='a', header=False, index=False)
+                
+                # Write remaining batches
+                for f in futures:
+                    res_rows = f.result()
+                    pd.DataFrame(res_rows, columns=columns).to_csv(output_path, mode='a', header=False, index=False)
 
-    all_edge_keys = sorted(all_edge_keys)
-
-    # Normalize edges
-    edge_rows = []
-    for record in tqdm(edge_records, desc="Processing edges", total=total):
-        row = {
-            "source": record["source"],
-            "target": record["target"],
-            "type": record["type"]
-        }
-
-        props = record["props"]
-        for key in all_edge_keys:
-            row[key] = props.get(key, None)
-
-        edge_rows.append(row)
-
-    df_edges = pd.DataFrame(edge_rows)
-    df_edges.to_csv(os.path.join(data_dir, "edges.csv"), index=False)
-
-    print("Edges CSV saved as edges.csv")
+    print(f"Edges CSV saved: {output_path}")
 
 def graph_recreation(namespace = 'Test'):
     '''
@@ -147,40 +231,36 @@ def graph_recreation(namespace = 'Test'):
     except Exception as e:
         print(f"Note on constraints: {e}")
 
-    print("Loading nodes and edges from CSV...")
-    # Performance: low_memory=False and dtype=str prevent mixed-type warnings and type mismatch in DB
-    nodes = pd.read_csv(os.path.join(data_dir, 'nodes.csv'), low_memory=False, dtype={'id': str})
-    edges = pd.read_csv(os.path.join(data_dir, 'edges.csv'), low_memory=False, dtype={'source': str, 'target': str})
+    nodes_csv = os.path.join(data_dir, 'nodes.csv')
+    edges_csv = os.path.join(data_dir, 'edges.csv')
 
-    # Granular Node Resume: Group nodes by label combination
-    print("Grouping nodes from CSV...")
-
+    print("Loading nodes from CSV (chunked)...")
+    # Performance: chunksize prevents memory explosion for large CSVs
     node_groups = defaultdict(list)
     
-    # Use itertuples for better performance and memory efficiency than to_dict(records)
-    for r in tqdm(nodes.itertuples(index=False), total=len(nodes), desc="Grouping nodes"):
-        r_dict = r._asdict()
-        labels_str = r_dict.pop("labels", "")
-        # Filter out NaN/null properties if any to keep DB clean
-        clean_props = {k: v for k, v in r_dict.items() if pd.notna(v) and k != 'id'}
-        
-        # Parse labels and deduplicate
-        # Restore parsing from CSV string
-        labels_list = [str(l).strip() for l in str(labels_str).split(":") if str(l).strip()]
-        labels_list = list(dict.fromkeys(labels_list)) # Deduplicate keeping order
+    # Estimate total nodes for progress bar (faster than counting lines)
+    est_total_nodes = total_nodes = sum(1 for _ in open(nodes_csv, encoding='utf-8')) - 1
+    
+    for chunk in tqdm(pd.read_csv(nodes_csv, low_memory=False, dtype={'id': str}, chunksize=50000), 
+                      total=(est_total_nodes // 50000) + 1, desc="Grouping nodes"):
+        for r in chunk.itertuples(index=False):
+            r_dict = r._asdict()
+            labels_str = r_dict.pop("labels", "")
+            # Filter out NaN/null properties
+            clean_props = {k: v for k, v in r_dict.items() if pd.notna(v) and k != 'id'}
+            
+            # Parse labels
+            labels_list = [str(l).strip() for l in str(labels_str).split(":") if str(l).strip()]
+            labels_list = list(dict.fromkeys(labels_list))
 
-        # 1. Identify components based on CSV structure: [Entity, Test, Database]
-        entity_types = ["Drug", "Disease"]
-        found_entity_type = next((l for l in labels_list if l in entity_types), "Entity")
-        db_labels = [l for l in labels_list if l != namespace and l not in entity_types]
-        found_db = db_labels[0] if db_labels else "Source"
-
-        # 2. Reconstruct exactly 3 labels in order: [Entity, Namespace, Database]
-        labels_list = [found_entity_type, namespace, found_db]
-        
-        # We preserve the order in the key for grouping
-        labels_key = ":".join(labels_list)
-        node_groups[labels_key].append({"id": r_dict['id'], "props": clean_props})
+            # Reconstruct labels in order: [Entity, Namespace, Database]
+            entity_types = ["Drug", "Disease"]
+            found_entity_type = next((l for l in labels_list if l in entity_types), "Entity")
+            db_labels = [l for l in labels_list if l != namespace and l not in entity_types]
+            found_db = db_labels[0] if db_labels else "Source"
+            
+            labels_key = f"{found_entity_type}:{namespace}:{found_db}"
+            node_groups[labels_key].append({"id": r_dict['id'], "props": clean_props})
 
     print("Checking database for node status (exact label matching)...")
     
@@ -217,16 +297,22 @@ def graph_recreation(namespace = 'Test'):
 
     print(f"Final physical node count for '{namespace}': {query_neo4j(f'MATCH (n:{namespace}) RETURN count(n) as t')[0]['t']}")
 
-    # Granular Edge Resume: Check counts by relationship type
-    print("Grouping edges from CSV...")
+    # Granular Edge Resume
+    print("Loading edges from CSV (chunked)...")
     edge_groups = defaultdict(list)
-    for r in tqdm(edges.itertuples(index=False), total=len(edges), desc="Grouping edges"):
-        r_dict = r._asdict()
-        rel_type = r_dict.pop("type")
-        source = r_dict.pop("source")
-        target = r_dict.pop("target")
-        clean_props = {k: v for k, v in r_dict.items() if pd.notna(v)}
-        edge_groups[rel_type].append({"source": source, "target": target, "props": clean_props})
+    
+    # Estimate total edges
+    est_total_edges = sum(1 for _ in open(edges_csv, encoding='utf-8')) - 1
+    
+    for chunk in tqdm(pd.read_csv(edges_csv, low_memory=False, dtype={'source': str, 'target': str}, chunksize=50000),
+                      total=(est_total_edges // 50000) + 1, desc="Grouping edges"):
+        for r in chunk.itertuples(index=False):
+            r_dict = r._asdict()
+            rel_type = r_dict.pop("type")
+            source = r_dict.pop("source")
+            target = r_dict.pop("target")
+            clean_props = {k: v for k, v in r_dict.items() if pd.notna(v)}
+            edge_groups[rel_type].append({"source": source, "target": target, "props": clean_props})
 
     print("Checking database for edge status...")
     for rel_type, rows in edge_groups.items():
