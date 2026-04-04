@@ -62,4 +62,55 @@ BATCH_SIZE = 500
             rows=rows
         )
 
-    
+## Continue with Radiology (however this is postponed)
+    radiology = read_full('note', 'radiology')
+
+    query = """
+        UNWIND $rows AS row
+
+        MERGE (d:Note:Test:MIMIC {id: row.note_id})
+        SET d.name = row.note_id,
+            d.time = row.charttime,
+            d.text = row.text,
+            d.admission_id = row.hadm_id,
+            d.patient_id = row.subject_id,
+            d.type = 'Radiology'
+
+        WITH d, row
+        OPTIONAL MATCH (a:Admission:Test:MIMIC {id: row.hadm_id})
+        WHERE row.hadm_id IS NOT NULL
+        FOREACH (_ IN CASE WHEN a IS NOT NULL THEN [1] ELSE [] END |
+            MERGE (a)-[:HAS_NOTE]->(d)
+        )
+
+        WITH d, row
+        OPTIONAL MATCH (p:Patient:Test:MIMIC {id: row.subject_id})
+        WHERE row.hadm_id IS NULL
+        FOREACH (_ IN CASE WHEN p IS NOT NULL THEN [1] ELSE [] END |
+            MERGE (p)-[:HAS_OUTNOTE]->(d)
+        )
+
+        """
+
+    # Process in batches
+    for i in tqdm(range(start_idx, len(radiology), BATCH_SIZE), desc="Batch processing"):
+
+        batch = radiology.iloc[i:i+BATCH_SIZE]
+
+        rows = []
+        for _, row in batch.iterrows():
+            rows.append({
+                'subject_id': row['subject_id'],
+                'hadm_id': row['hadm_id'] if row['hadm_id'] else None,
+                "note_id": row["note_id"],
+                "charttime": row["charttime"],
+                'text': row['text']
+            })
+
+        dml_ddl_neo4j(
+            query,
+            progress=False,
+            rows=rows
+        )
+
+        
