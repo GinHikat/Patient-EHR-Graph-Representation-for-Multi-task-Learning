@@ -117,3 +117,69 @@ from shared_functions.global_functions import *
     for i in tqdm(range(0, len(rows), BATCH_SIZE), desc="Adding MeSH/OMIM IDs"):
         dml_ddl_neo4j(query, progress=False, rows=rows[i:i+BATCH_SIZE])
         
+#### Further enrich and connect Phenotypes with other Diseases via HPOA (HPO Annotation)
+
+    def load_hpoa(path):
+        """
+        Loads HPO annotations into a pandas DataFrame, 
+        skipping metadata and handling tab separation.
+        """
+        df = pd.read_csv(
+            path, 
+            sep='\t', 
+            comment='#', 
+            skip_blank_lines=True,
+            keep_default_na=False # Prevents empty strings from being converted to NaN
+        )
+        return df
+
+    hpo_df = load_hpoa(hpoa_path)
+
+    hpo_df = hpo_df[['database_id', 'disease_name', 'hpo_id', 'aspect']]
+
+    hpo_df = hpo_df[~hpo_df['aspect'].isin(['H', ''])]
+
+    try_merge = pd.merge(hpo_df, nodes, on = 'disease_name', how = 'inner')
+
+    query = """
+        UNWIND $rows AS row
+
+        MATCH (d:Test {id: row.id})
+        MATCH (p:Phenotype:Test {id: row.hpo_id})
+
+        SET d.omim_id = row.omim_id
+
+        FOREACH (_ IN CASE WHEN row.aspect = 'P' THEN [1] ELSE [] END |
+            MERGE (d)-[:HAS_PHENOTYPE]->(p)
+        )
+        FOREACH (_ IN CASE WHEN row.aspect = 'I' THEN [1] ELSE [] END |
+            MERGE (p)-[:INHERIT]->(d)
+        )
+        FOREACH (_ IN CASE WHEN row.aspect = 'C' THEN [1] ELSE [] END |
+            MERGE (p)-[:PROGRESS_FROM]->(d)
+        )
+        FOREACH (_ IN CASE WHEN row.aspect = 'M' THEN [1] ELSE [] END |
+            MERGE (p)-[:MODIFY]->(d)
+        )
+        """
+
+    for i in tqdm(range(start_idx, len(try_merge), BATCH_SIZE), desc="Batch processing"):
+
+        batch = try_merge.iloc[i:i+BATCH_SIZE]
+
+        rows = []
+        for _, row in batch.iterrows():
+            rows.append({
+                'omim_id': row['omim_id'],
+                'hpo_id':  row['hpo_id'],
+                'aspect':  row['aspect'],
+                "id":      row["id"]
+            })
+
+        dml_ddl_neo4j(
+            query,
+            progress=False,
+            rows=rows
+        )
+
+        

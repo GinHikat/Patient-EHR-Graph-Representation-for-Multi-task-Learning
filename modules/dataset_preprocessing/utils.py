@@ -123,4 +123,27 @@ def shift_year(series, offset_series):
             result.append(pd.NaT)
     return pd.Series(result, index=series.index)
 
+def update_list(row, col):
+    '''
+    Update a list of IDs by adding a new ID.
     
+    Args:
+        row (pd.Series): The row to process.
+        col (str): The column to update.
+    
+    Returns:
+        list: The updated list.
+
+    How to use: df['col'] = df.apply(update_list, axis=1, col='col')
+    '''
+    if isinstance(row[col], list):
+        current_ids = [str(x).strip() for x in row[col]]
+    else:
+        current_ids = []
+    
+    if ':' in str(row[col]):
+        new_id = str(row[col]).split(':')[1].strip()
+        current_ids.append(new_id)
+        
+    return list(set(current_ids))
+
