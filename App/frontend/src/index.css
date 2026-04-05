@@ -11,7 +11,11 @@
   --accent-hover: #60a5fa;
   --danger-color: #ef4444;
 
-  font-family: "Inter", system-ui, -apple-system, sans-serif;
+  font-family:
+    "Inter",
+    system-ui,
+    -apple-system,
+    sans-serif;
   color: var(--text-main);
   background-color: var(--bg-color);
 
@@ -85,8 +89,10 @@ body {
   width: 100%;
   height: 4px;
   border-radius: 2px;
-  background: var(--panel-border); /* uses theme-aware border color for consistency */
-  border: 0.5px solid rgba(0,0,0,0.05);
+  background: var(
+    --panel-border
+  ); /* uses theme-aware border color for consistency */
+  border: 0.5px solid rgba(0, 0, 0, 0.05);
   outline: none;
   margin: 12px 0;
   cursor: pointer;
@@ -225,7 +231,9 @@ body {
   display: flex;
   flex-direction: column;
   gap: 20px;
-  transition: opacity 0.3s ease, transform 0.3s ease;
+  transition:
+    opacity 0.3s ease,
+    transform 0.3s ease;
   overflow-y: auto;
   overflow-x: hidden;
   /* Removed native resize handle */
@@ -498,19 +506,25 @@ body {
 /* Custom Scrollbars for All Panels */
 .controls-panel::-webkit-scrollbar,
 .node-info-panel::-webkit-scrollbar,
-.legend::-webkit-scrollbar {
+.legend::-webkit-scrollbar,
+.database-stats-pane::-webkit-scrollbar,
+.stats-breakdown::-webkit-scrollbar {
   width: 6px;
 }
 
 .controls-panel::-webkit-scrollbar-track,
 .node-info-panel::-webkit-scrollbar-track,
-.legend::-webkit-scrollbar-track {
+.legend::-webkit-scrollbar-track,
+.database-stats-pane::-webkit-scrollbar-track,
+.stats-breakdown::-webkit-scrollbar-track {
   background: transparent;
 }
 
 .controls-panel::-webkit-scrollbar-thumb,
 .node-info-panel::-webkit-scrollbar-thumb,
-.legend::-webkit-scrollbar-thumb {
+.legend::-webkit-scrollbar-thumb,
+.database-stats-pane::-webkit-scrollbar-thumb,
+.stats-breakdown::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.1);
   border-radius: 10px;
   border: 1px solid transparent;
@@ -519,7 +533,9 @@ body {
 
 .controls-panel::-webkit-scrollbar-thumb:hover,
 .node-info-panel::-webkit-scrollbar-thumb:hover,
-.legend::-webkit-scrollbar-thumb:hover {
+.legend::-webkit-scrollbar-thumb:hover,
+.database-stats-pane::-webkit-scrollbar-thumb:hover,
+.stats-breakdown::-webkit-scrollbar-thumb:hover {
   background: var(--accent-hover);
   box-shadow: 0 0 8px rgba(59, 130, 246, 0.4);
 }
@@ -527,7 +543,9 @@ body {
 /* Firefox Support */
 .controls-panel,
 .node-info-panel,
-.legend {
+.legend,
+.database-stats-pane,
+.stats-breakdown {
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
 }

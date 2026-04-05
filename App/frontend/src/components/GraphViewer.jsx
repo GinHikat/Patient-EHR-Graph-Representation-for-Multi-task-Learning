@@ -57,6 +57,7 @@ const GraphViewer = ({
   const [selectedTypes, setSelectedTypes] = useState(["All"]);
   const [pendingTypes, setPendingTypes] = useState(["All"]);
   const [nodeLimit, setNodeLimit] = useState(100);
+  const [pendingNodeLimit, setPendingNodeLimit] = useState(100);
   const [loading, setLoading] = useState(false);
   const [selectedNode, setSelectedNode] = useState(null);
   const [selectedLink, setSelectedLink] = useState(null);
@@ -174,9 +175,9 @@ const GraphViewer = ({
   }, [nodeLimit, selectedTypes, searchId]);
 
   const handleSearchNode = async (e) => {
-    e.preventDefault();
+    if (e) e.preventDefault();
 
-    // Always apply pending node types when clicking the main Find button
+    // Always apply pending node types and pending node limit when clicking the Search button
     applyFilters();
 
     // Clear highlights when doing a fresh search
@@ -188,6 +189,7 @@ const GraphViewer = ({
     setSearchLoading(true);
     try {
       const params = new URLSearchParams();
+      params.append("limit", pendingNodeLimit); // Apply the limit to search results too
       if (!pendingTypes.includes("All")) {
         pendingTypes.forEach((type) => params.append("node_type", type));
       }
@@ -274,6 +276,7 @@ const GraphViewer = ({
 
   const applyFilters = () => {
     setSelectedTypes([...pendingTypes]);
+    setNodeLimit(pendingNodeLimit); // Now apply the pending limit
   };
 
   const handleNodeClick = useCallback(
@@ -464,16 +467,16 @@ const GraphViewer = ({
           <div className="control-group">
             <label>
               <span>Node Limit</span>
-              <span style={{ color: "var(--accent-color)" }}>{nodeLimit}</span>
+              <span style={{ color: "var(--accent-color)" }}>{pendingNodeLimit}</span>
             </label>
             <input
               type="range"
               className="custom-slider"
               min="10"
-              max="2000"
+              max="1000"
               step="50"
-              value={nodeLimit}
-              onChange={(e) => setNodeLimit(parseInt(e.target.value))}
+              value={pendingNodeLimit}
+              onChange={(e) => setPendingNodeLimit(parseInt(e.target.value))}
             />
           </div>
 

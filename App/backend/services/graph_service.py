@@ -1,3 +1,4 @@
+from typing import Optional, List
 from core.database import get_db_driver
 from core.config import settings
 import neo4j.time
@@ -19,7 +20,7 @@ def get_edge_types_data(namespace: str = "Test"):
         result = session.run(query)
         return [record["type"] for record in result]
 
-def get_graph_data(limit: int, node_types: list[str] = None, edge_types: list[str] = None, namespace: str = "Test"):
+def get_graph_data(limit: int, node_types: Optional[List[str]] = None, edge_types: Optional[List[str]] = None, namespace: str = "Test"):
     driver = get_db_driver()
     
     # 1. Determine labels to balance
@@ -40,35 +41,23 @@ def get_graph_data(limit: int, node_types: list[str] = None, edge_types: list[st
         return {"nodes": [], "links": []}
 
     # 3. Calculate quotas for each category to ensure even distribution
-    # If we are filtering by edge type specifically, we focus more on edges.
-    if edge_types and not node_types:
-        num_node_slots = 0 # Don't just sample random nodes if we want specific edges
-        num_edge_slots = len(target_edge_types)
-    else:
-        num_node_slots = len(target_labels)
-        num_edge_slots = len(target_edge_types)
-        
+    num_node_slots = len(target_labels)
+    num_edge_slots = len(target_edge_types)
     total_slots = num_node_slots + num_edge_slots
     
-    quota = int(limit / (num_node_slots + 1.2 * num_edge_slots)) if total_slots > 0 else limit
-    quota = max(1, quota)
+    quota = max(1, int(limit / (num_node_slots + 1.2 * num_edge_slots))) if total_slots > 0 else limit
 
     nodes = {}
     links = []
 
-    is_filtered = node_types and "All" not in node_types
+    is_filtered = bool(node_types and "All" not in node_types)
 
     with driver.session() as session:
-        # Step A: Sample nodes balanced by label (only if not strictly filtering by edges)
+        # Step A & B: Combined Sampling
         if num_node_slots > 0:
             for label in target_labels:
-                query = f"""
-                MATCH (n:`{label}`)
-                WHERE n:`{namespace}`
-                RETURN n
-                LIMIT {quota}
-                """
-                result = session.run(query)
+                query = f"MATCH (n:`{label}`:`{namespace}`) RETURN n LIMIT $quota"
+                result = session.run(query, quota=quota)
                 for record in result:
                     n = record["n"]
                     if n:
@@ -76,9 +65,7 @@ def get_graph_data(limit: int, node_types: list[str] = None, edge_types: list[st
                         if eid not in nodes:
                             nodes[eid] = {"id": eid, "labels": list(n.labels), "properties": serialize_properties(dict(n))}
 
-        # Step B: Sample edges balanced by type
         for etype in target_edge_types:
-            # If filtered, ensure BOTH ends of the relationship match our target labels
             where_clause = f"WHERE n:`{namespace}` AND m:`{namespace}`"
             if is_filtered:
                 where_clause += " AND any(l IN labels(n) WHERE l IN $target_labels) AND any(l IN labels(m) WHERE l IN $target_labels)"
@@ -87,15 +74,13 @@ def get_graph_data(limit: int, node_types: list[str] = None, edge_types: list[st
             MATCH (n)-[r:`{etype}`]-(m)
             {where_clause}
             RETURN n, r, m
-            LIMIT {quota * 2 if edge_types else quota}
+            LIMIT $limit
             """
-            result = session.run(query, target_labels=target_labels)
+            result = session.run(query, limit=quota * 2 if edge_types else quota, target_labels=target_labels)
             for record in result:
-                # Add nodes (with additional label check in case of complex label overlap or non-target labels)
                 for key in ["n", "m"]:
                     node = record[key]
                     if node:
-                        # Safety check: if is_filtered is true, only add the node if it matches target_labels
                         if is_filtered:
                             node_labels = set(node.labels)
                             if not any(l in node_labels for l in target_labels):
@@ -105,7 +90,6 @@ def get_graph_data(limit: int, node_types: list[str] = None, edge_types: list[st
                         if eid not in nodes:
                             nodes[eid] = {"id": eid, "labels": list(node.labels), "properties": serialize_properties(dict(node))}
                 
-                # Add relationship
                 r = record["r"]
                 if r:
                     start_node = r.start_node if hasattr(r, "start_node") else r.nodes[0]
@@ -113,13 +97,12 @@ def get_graph_data(limit: int, node_types: list[str] = None, edge_types: list[st
                     s_id = start_node.element_id if hasattr(start_node, "element_id") else str(getattr(start_node, "id", start_node))
                     e_id = end_node.element_id if hasattr(end_node, "element_id") else str(getattr(end_node, "id", end_node))
                     
-                    # Only add link if both nodes are in our allowed set
                     if s_id in nodes and e_id in nodes:
                         link = {"source": s_id, "target": e_id, "type": r.type, "properties": serialize_properties(dict(r))}
                         if link not in links:
                             links.append(link)
 
-        # Step C: Enrichment - fetch all edges between the nodes we've already collected
+        # Step C: Enrichment
         if nodes:
             node_ids = list(nodes.keys())
             query = f"""
@@ -127,6 +110,7 @@ def get_graph_data(limit: int, node_types: list[str] = None, edge_types: list[st
             WHERE elementId(n) IN $ids AND elementId(m) IN $ids
             {"AND type(r) IN $etypes" if edge_types else ""}
             RETURN r
+            LIMIT 5000 
             """
             result = session.run(query, ids=node_ids, etypes=edge_types)
             for record in result:
@@ -139,43 +123,50 @@ def get_graph_data(limit: int, node_types: list[str] = None, edge_types: list[st
                 if link not in links:
                     links.append(link)
 
-    # Step D: Final trimming to respect the limit if we went over
     if len(nodes) > limit:
-        # Keep a balanced set by taking first few of each if we wanted to be fancy,
-        # but simple slicing is usually fine once the collection was balanced.
-        node_list = list(nodes.values())[:limit]
-        final_ids = {n["id"] for n in node_list}
+        node_ids_list = list(nodes.keys())[:limit]
+        final_nodes = [nodes[eid] for eid in node_ids_list]
+        final_ids = set(node_ids_list)
         final_links = [l for l in links if l["source"] in final_ids and l["target"] in final_ids]
-        return {"nodes": node_list, "links": final_links}
+        return {"nodes": final_nodes, "links": final_links}
 
     return {"nodes": list(nodes.values()), "links": links}
 
-def get_node_by_id(node_id: str, namespace: str = None, node_types: list[str] = None):
+def get_node_by_id(node_id: str, namespace: str = "Test", node_types: Optional[List[str]] = None):
     driver = get_db_driver()
-    label_part = f"n:`{namespace}`" if namespace else "TRUE"
     
-    # Heuristic: if input is mostly text/special chars, use CONTAINS. If mostly digits, STARTS WITH.
     import re
     letters = len(re.findall(r'[a-zA-Z]', node_id))
     digits = len(re.findall(r'[0-9]', node_id))
-    # Use CONTAINS if more text than digits, else STARTS WITH (better for IDs)
     op = "CONTAINS" if letters > digits else "STARTS WITH"
     
-    # Check if we are filtering by categories
     is_filtered = bool(node_types and "All" not in node_types and len(node_types) > 0)
     target_labels = node_types if node_types else []
 
+    # REFRACTORED SEARCH: TIERED APPROACH TO HIT INDICES
     query = f"""
-    MATCH (n)
-    WHERE {label_part}
-    AND (
-       elementId(n) = $node_id 
-       OR toString(n.id) = $node_id 
-       OR toLower(toString(n.id)) {op} toLower($node_id)
+    // Tier 1: Try exact ID Match (Most efficient, hits unique constraint/index)
+    MATCH (n:`{namespace}`)
+    WHERE n.id = $node_id OR elementId(n) = $node_id
+    WITH n LIMIT 1
+    
+    UNION
+    
+    // Tier 2: Try common name properties (hits B-Tree index if exists)
+    MATCH (n:`{namespace}`)
+    WHERE n.name = $node_id OR n.title = $node_id OR n.Title = $node_id
+    WITH n LIMIT 10
+    
+    UNION
+    
+    // Tier 3: Partial Search (Fuzzy fallback, slow full-scan)
+    MATCH (n:`{namespace}`)
+    WHERE toLower(toString(n.id)) {op} toLower($node_id)
        OR toLower(toString(n.name)) CONTAINS toLower($node_id) 
        OR toLower(toString(n.title)) CONTAINS toLower($node_id)
-       OR toLower(toString(n.Title)) CONTAINS toLower($node_id)
-    )
+    WITH n LIMIT 20
+
+    // Post-Search Enrichment: Expand context
     WITH n LIMIT 20
     OPTIONAL MATCH (n)-[r]-(m)
     WHERE NOT $is_filtered OR any(l IN labels(m) WHERE l IN $target_labels)
@@ -218,37 +209,45 @@ def get_node_by_id(node_id: str, namespace: str = None, node_types: list[str] = 
 
 def get_node_types_data():
     driver = get_db_driver()
-    # Return labels that have at least one node
-    query = """
-    MATCH (n) 
-    WITH DISTINCT labels(n) AS labels 
-    UNWIND labels AS label 
-    RETURN DISTINCT label
-    """
+    # Optimized: If possible, use call db.labels()
+    query = "CALL db.labels() YIELD label RETURN label"
     with driver.session() as session:
         result = session.run(query)
-        labels = [record["label"] for record in result if record["label"] != "Test"]
+        labels = [record["label"] for record in result if record["label"] not in ("Test", "Entity", "Node")]
         return labels
 
 def get_database_stats_data():
     driver = get_db_driver()
     with driver.session() as session:
-        # 1. Total Nodes
-        total_nodes_res = session.run("MATCH (n:Test) RETURN count(n) as total")
-        total_nodes = total_nodes_res.single()["total"]
+        # FASTEST: Use CALL apoc.meta.stats() if available
+        try:
+            apoc_res = session.run("CALL apoc.meta.stats() YIELD nodeCount, relCount, labels, relTypesCount")
+            data = apoc_res.single()
+            if data and data["nodeCount"] > 0:
+                return {
+                    "total_nodes": data["nodeCount"],
+                    "node_breakdown": [{"labels": [k], "count": v} for k, v in data["labels"].items()],
+                    "total_edges": data["relCount"],
+                    "edge_breakdown": [{"type": k, "count": v} for k, v in data["relTypesCount"].items()]
+                }
+        except:
+            pass
+
+        # Fallback: Multi-pass but efficient grouping
+        # 1. Total Nodes (Hits count store)
+        total_nodes = session.run("MATCH (n:Test) RETURN count(n) as total").single()["total"]
         
-        # 2. Node Breakdown
+        # 2. Node Breakdown (Single pass over nodes)
         node_breakdown_res = session.run("""
             MATCH (n:Test)
             RETURN labels(n) as labels, count(n) as count
         """)
         node_breakdown = [{"labels": record["labels"], "count": record["count"]} for record in node_breakdown_res]
         
-        # 3. Total Edges
-        total_edges_res = session.run("MATCH (:Test)-[r]->(:Test) RETURN count(r) as total")
-        total_edges = total_edges_res.single()["total"]
+        # 3. Total Edges (Hits count store)
+        total_edges = session.run("MATCH (:Test)-[r]->(:Test) RETURN count(r) as total").single()["total"]
         
-        # 4. Edge Breakdown
+        # 4. Edge Breakdown (Single pass over relationships)
         edge_breakdown_res = session.run("""
             MATCH (:Test)-[r]->(:Test)
             RETURN type(r) as type, count(r) as count

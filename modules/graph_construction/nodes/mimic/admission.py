@@ -218,3 +218,64 @@ adm['length_of_stay'] = (adm['dischtime'] - adm['admittime']).dt.total_seconds()
             rows=rows
         )
 
+######## Start adding Procedure to each Admission 
+    procedure = read_full('hosp', 'procedures_icd')
+
+    query = """
+        UNWIND $rows AS row
+
+        MATCH(d:Admission:Test:MIMIC {id: row.hadm_id})
+        MATCH(p:Procedure:MIMIC:Test {id: row.icd_id})
+        
+        MERGE (d)-[:HAS_PROCEDURE]->(p)
+        """
+
+    # Process in batches
+    for i in tqdm(range(start_idx, len(procedure), BATCH_SIZE), desc="Batch processing"):
+
+        batch = procedure.iloc[i:i+BATCH_SIZE]
+
+        rows = []
+        for _, row in batch.iterrows():
+            rows.append({
+                "hadm_id": row["hadm_id"],
+                'icd_id': row['icd_code']
+            })
+
+        dml_ddl_neo4j(
+            query,
+            progress=False,
+            rows=rows
+        )
+
+######## Start adding Diagnosis to each Admission 
+    diagnosis = read_full('hosp', 'diagnoses_icd')
+
+    query = """
+        UNWIND $rows AS row
+
+        MATCH(d:Admission:Test:MIMIC {id: row.hadm_id})
+        MATCH(p:Diagnosis:MIMIC:Test {id: row.icd_id})
+        
+        MERGE (d)-[:HAS_DIAGNOSIS]->(p)
+        """
+
+    # Process in batches
+    for i in tqdm(range(start_idx, len(diagnosis), BATCH_SIZE), desc="Batch processing"):
+
+        batch = diagnosis.iloc[i:i+BATCH_SIZE]
+
+        rows = []
+        for _, row in batch.iterrows():
+            rows.append({
+                "hadm_id": row["hadm_id"],
+                'icd_id': row['icd_code']
+            })
+
+        dml_ddl_neo4j(
+            query,
+            progress=False,
+            rows=rows
+        )
+
+        

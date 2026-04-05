@@ -14,10 +14,10 @@ A research project that constructs a structured **Knowledge Graph** from patient
 ├── modules/
 │   ├── dataset_preprocessing/    # Raw data cleaning scripts
 │   └── graph_construction/       # Neo4j graph ingestion scripts
-├── notebooks/              
+├── notebooks/            
 ├── shared_functions/             # Shared utilities (Google Sheets, helpers)
 ├── secrets/                      # Credentials 
-├── .env.example         
+├── .env.example       
 ├── .gitignore
 └── requirements.txt
 ```
@@ -71,7 +71,7 @@ NEO4J_USERNAME=neo4j
 NEO4J_AUTH=your_password
 NEO4J_DATABASE=neo4j
 
-# HuggingFace
+# HuggingFace key for faster data load
 HUGGINGFACE_API_KEY=your_hf_key
 ```
 
@@ -112,7 +112,7 @@ npm run dev
 
 The app will be available at `http://localhost:5173`.
 
-Or just simply open the Web on `https://patient-ehr-graph.vercel.app/`. However, due to Free tier Render, the App may need an amount of time for Cold start 🦫
+Or just simply open the Web on `https://patient-ehr-graph.vercel.app`. However, due to Free tier Render, the App may need an amount of time for Cold start 🦫
 
 ---
 
@@ -129,9 +129,9 @@ python -m pytest test
 
 ## 📋 Prerequisites
 
-| Requirement      | Version                                          |
-| ---------------- | ------------------------------------------------ |
-| Python           | 3.10+                                            |
-| Node.js + npm    | v16+                                             |
-| Neo4j            | Any accessible instance (local, Docker, or Aura) |
-| uv*(optional)* | Latest                                           |
+| Requirement    | Version                                                                                        |
+| -------------- | ---------------------------------------------------------------------------------------------- |
+| Python         | 3.10+                                                                                          |
+| Node.js + npm  | v16+                                                                                           |
+| Neo4j          | Any accessible instance (local, Docker, or Aura), just ensure it has the necessary information |
+| uv*(optional)* | Latest                                                                                         |
