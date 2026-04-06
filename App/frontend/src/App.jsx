@@ -8,6 +8,7 @@ import {
   ChevronRight,
   Sun,
   Moon,
+  RefreshCw,
 } from "lucide-react";
 import "./index.css";
 
@@ -64,6 +65,7 @@ function App() {
   });
   const [externalFilter, setExternalFilter] = useState(null);
   const [theme, setTheme] = useState(localStorage.getItem("theme") || "dark");
+  const [loading, setLoading] = useState(false);
 
   // Handle theme persistence
   useEffect(() => {
@@ -159,6 +161,18 @@ function App() {
     fetchStats();
   }, []);
 
+  const refreshStats = async () => {
+    setLoading(true); // Re-use loading or add a specific one
+    try {
+      const response = await axios.get(`${API_BASE_URL}/stats`);
+      setDbStats(response.data);
+    } catch (err) {
+      console.error("Failed to refresh DB stats", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleTypeClick = (type, category = "node") => {
     setExternalFilter({ type, category });
     setActiveTab("graph");
@@ -222,6 +236,14 @@ function App() {
                 {dbStats.total_edges.toLocaleString()}
               </span>
             </div>
+            <button
+              className="refresh-stats-btn"
+              onClick={refreshStats}
+              title="Refresh Statistics"
+              disabled={loading}
+            >
+              <RefreshCw size={20} className={loading ? "spin" : ""} />
+            </button>
           </div>
 
           <div className="stats-breakdown">

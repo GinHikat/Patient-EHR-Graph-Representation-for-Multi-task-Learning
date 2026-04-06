@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import ForceGraph2D from "react-force-graph-2d";
 import axios from "axios";
-import { X, Filter, ChevronLeft, ChevronRight } from "lucide-react";
+import { X, Filter, ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
 
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || "http://localhost:8000/api";
@@ -380,6 +380,14 @@ const GraphViewer = ({
     }
   };
 
+  const resetFilters = () => {
+    setPendingTypes(["All"]);
+    setPendingNodeLimit(100);
+    setSearchId("");
+    setSelectedTypes(["All"]);
+    setNodeLimit(100);
+  };
+
   return (
     <div className="graph-container">
       {loading && (
@@ -426,6 +434,23 @@ const GraphViewer = ({
             {/* Resize handle for the whole right border */}
             <div className="resize-handle-area" onMouseDown={startResizing} />
           <div className="control-group">
+            <div className="data-counter-header">
+              <div className="data-stat">
+                <span className="stat-label">Visible Nodes</span>
+                <span className="stat-value">{graphData.nodes.length}</span>
+              </div>
+              <div className="data-stat">
+                <span className="stat-label">Visible Edges</span>
+                <span className="stat-value">{graphData.links.length}</span>
+              </div>
+              <button 
+                className="reset-view-btn"
+                onClick={resetFilters}
+                title="Reset Filters & View"
+              >
+                <RefreshCw size={16} />
+              </button>
+            </div>
             <div className="search-pane">
               <label>Search by ID / Name</label>
               <form onSubmit={handleSearchNode} className="search-form">

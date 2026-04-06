@@ -230,33 +230,51 @@ def get_database_stats_data():
                     "total_edges": data["relCount"],
                     "edge_breakdown": [{"type": k, "count": v} for k, v in data["relTypesCount"].items()]
                 }
-        except:
+        except Exception:
             pass
 
-        # Fallback: Multi-pass but efficient grouping
-        # 1. Total Nodes (Hits count store)
-        total_nodes = session.run("MATCH (n:Test) RETURN count(n) as total").single()["total"]
-        
-        # 2. Node Breakdown (Single pass over nodes)
-        node_breakdown_res = session.run("""
-            MATCH (n:Test)
-            RETURN labels(n) as labels, count(n) as count
-        """)
-        node_breakdown = [{"labels": record["labels"], "count": record["count"]} for record in node_breakdown_res]
-        
-        # 3. Total Edges (Hits count store)
-        total_edges = session.run("MATCH (:Test)-[r]->(:Test) RETURN count(r) as total").single()["total"]
-        
-        # 4. Edge Breakdown (Single pass over relationships)
-        edge_breakdown_res = session.run("""
-            MATCH (:Test)-[r]->(:Test)
-            RETURN type(r) as type, count(r) as count
-        """)
-        edge_breakdown = [{"type": record["type"], "count": record["count"]} for record in edge_breakdown_res]
-        
-        return {
-            "total_nodes": total_nodes,
-            "node_breakdown": node_breakdown,
-            "total_edges": total_edges,
-            "edge_breakdown": edge_breakdown
-        }
+        # Fallback: Using faster metadata/label-based counting
+        # 1. Get all labels and count for each (Hits count store)
+        try:
+            labels_res = session.run("CALL db.labels() YIELD label RETURN label")
+            node_breakdown = []
+            total_nodes = 0
+            for record in labels_res:
+                label = record["label"]
+                if label in ("Test", "Entity", "Node", "MIMIC", "External"):
+                    continue
+                count_res = session.run(f"MATCH (n:`{label}`) RETURN count(n) as count").single()
+                count = count_res["count"] if count_res else 0
+                node_breakdown.append({"labels": [label], "count": count})
+                total_nodes += count # This might double-count nodes with multiple labels, but okay for breakdown
+
+            # Get absolute total from Test label (representative count store)
+            total_nodes_final = session.run("MATCH (n:Test) RETURN count(n) as total").single()["total"]
+            if total_nodes_final == 0: # Fallback to global count if :Test is missing
+                total_nodes_final = session.run("MATCH (n) RETURN count(n) as total").single()["total"]
+
+            # 2. Get relationship types and counts
+            rel_types_res = session.run("CALL db.relationshipTypes() YIELD relationshipType RETURN relationshipType")
+            edge_breakdown = []
+            total_edges = 0
+            for record in rel_types_res:
+                rtype = record["relationshipType"]
+                count_res = session.run(f"MATCH ()-[r:`{rtype}`]->() RETURN count(r) as count").single()
+                count = count_res["count"] if count_res else 0
+                edge_breakdown.append({"type": rtype, "count": count})
+                total_edges += count
+
+            return {
+                "total_nodes": total_nodes_final,
+                "node_breakdown": node_breakdown,
+                "total_edges": total_edges,
+                "edge_breakdown": edge_breakdown
+            }
+        except Exception as e:
+            print(f"Fallback stats failed: {e}")
+            return {
+                "total_nodes": 0,
+                "node_breakdown": [],
+                "total_edges": 0,
+                "edge_breakdown": []
+            }

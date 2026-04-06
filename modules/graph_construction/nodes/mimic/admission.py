@@ -278,4 +278,4 @@ adm['length_of_stay'] = (adm['dischtime'] - adm['admittime']).dt.total_seconds()
             rows=rows
         )
 
-        
+  
