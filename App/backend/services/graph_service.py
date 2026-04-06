@@ -56,7 +56,9 @@ def get_graph_data(limit: int, node_types: Optional[List[str]] = None, edge_type
         # Step A & B: Combined Sampling
         if num_node_slots > 0:
             for label in target_labels:
-                query = f"MATCH (n:`{label}`:`{namespace}`) RETURN n LIMIT $quota"
+                lbl_clause = f":`{label}`" if label != "All" else ""
+                ns_clause = f":`{namespace}`" if namespace and namespace != "All" else ""
+                query = f"MATCH (n{lbl_clause}{ns_clause}) RETURN n LIMIT $quota"
                 result = session.run(query, quota=quota)
                 for record in result:
                     n = record["n"]
@@ -132,7 +134,7 @@ def get_graph_data(limit: int, node_types: Optional[List[str]] = None, edge_type
 
     return {"nodes": list(nodes.values()), "links": links}
 
-def get_node_by_id(node_id: str, namespace: str = "Test", node_types: Optional[List[str]] = None):
+def get_node_by_id(node_id: str, namespace: Optional[str] = None, node_types: Optional[List[str]] = None):
     driver = get_db_driver()
     
     import re
@@ -144,27 +146,30 @@ def get_node_by_id(node_id: str, namespace: str = "Test", node_types: Optional[L
     target_labels = node_types if node_types else []
 
     # REFRACTORED SEARCH: TIERED APPROACH TO HIT INDICES
+    ns_clause = f":`{namespace}`" if namespace else ""
     query = f"""
-    // Tier 1: Try exact ID Match (Most efficient, hits unique constraint/index)
-    MATCH (n:`{namespace}`)
-    WHERE n.id = $node_id OR elementId(n) = $node_id
-    WITH n LIMIT 1
-    
-    UNION
-    
-    // Tier 2: Try common name properties (hits B-Tree index if exists)
-    MATCH (n:`{namespace}`)
-    WHERE n.name = $node_id OR n.title = $node_id OR n.Title = $node_id
-    WITH n LIMIT 10
-    
-    UNION
-    
-    // Tier 3: Partial Search (Fuzzy fallback, slow full-scan)
-    MATCH (n:`{namespace}`)
-    WHERE toLower(toString(n.id)) {op} toLower($node_id)
-       OR toLower(toString(n.name)) CONTAINS toLower($node_id) 
-       OR toLower(toString(n.title)) CONTAINS toLower($node_id)
-    WITH n LIMIT 20
+    CALL {{
+        // Tier 1: Try exact ID Match (Most efficient, hits unique constraint/index)
+        MATCH (n{ns_clause})
+        WHERE n.id = $node_id OR elementId(n) = $node_id
+        RETURN n LIMIT 1
+        
+        UNION
+        
+        // Tier 2: Try common name properties (hits B-Tree index if exists)
+        MATCH (n{ns_clause})
+        WHERE n.name = $node_id OR n.title = $node_id OR n.Title = $node_id
+        RETURN n LIMIT 10
+        
+        UNION
+        
+        // Tier 3: Partial Search (Fuzzy fallback, slow full-scan)
+        MATCH (n{ns_clause})
+        WHERE toLower(toString(n.id)) {op} toLower($node_id)
+           OR toLower(toString(n.name)) CONTAINS toLower($node_id) 
+           OR toLower(toString(n.title)) CONTAINS toLower($node_id)
+        RETURN n LIMIT 20
+    }}
 
     // Post-Search Enrichment: Expand context
     WITH n LIMIT 20
@@ -234,19 +239,26 @@ def get_database_stats_data():
             pass
 
         # Fallback: Using faster metadata/label-based counting
-        # 1. Get all labels and count for each (Hits count store)
         try:
-            labels_res = session.run("CALL db.labels() YIELD label RETURN label")
+            # 1. Get detailed label combinations for hierarchy
+            hierarchy_query = """
+            MATCH (n) 
+            WITH labels(n) as label_list
+            RETURN [l IN label_list WHERE NOT l IN ['Entity', 'Node']] as labels, count(*) as count
+            ORDER BY count DESC
+            LIMIT 50
+            """
+            hierarchy_res = session.run(hierarchy_query)
             node_breakdown = []
             total_nodes = 0
-            for record in labels_res:
-                label = record["label"]
-                if label in ("Test", "Entity", "Node", "MIMIC", "External"):
-                    continue
-                count_res = session.run(f"MATCH (n:`{label}`) RETURN count(n) as count").single()
-                count = count_res["count"] if count_res else 0
-                node_breakdown.append({"labels": [label], "count": count})
-                total_nodes += count # This might double-count nodes with multiple labels, but okay for breakdown
+            for record in hierarchy_res:
+                lbls = record["labels"]
+                if not lbls: continue
+                count = record["count"]
+                node_breakdown.append({"labels": lbls, "count": count})
+                # total_nodes is calculated separately to avoid double counting across sets if they were overlaps, 
+                # but labels(n) gives the full set, so this summation is actually correct for total.
+                total_nodes += count
 
             # Get absolute total from Test label (representative count store)
             total_nodes_final = session.run("MATCH (n:Test) RETURN count(n) as total").single()["total"]

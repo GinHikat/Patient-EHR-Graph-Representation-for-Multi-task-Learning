@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import GraphViewer from "./components/GraphViewer";
 import axios from "axios";
 import {
@@ -65,7 +65,11 @@ function App() {
   });
   const [externalFilter, setExternalFilter] = useState(null);
   const [theme, setTheme] = useState(localStorage.getItem("theme") || "dark");
-  const [loading, setLoading] = useState(false);
+  const [statsLoading, setStatsLoading] = useState(false);
+
+  const clearExternalFilter = useCallback(() => {
+    setExternalFilter(null);
+  }, []);
 
   // Handle theme persistence
   useEffect(() => {
@@ -162,14 +166,14 @@ function App() {
   }, []);
 
   const refreshStats = async () => {
-    setLoading(true); // Re-use loading or add a specific one
+    setStatsLoading(true);
     try {
       const response = await axios.get(`${API_BASE_URL}/stats`);
       setDbStats(response.data);
     } catch (err) {
       console.error("Failed to refresh DB stats", err);
     } finally {
-      setLoading(false);
+      setStatsLoading(false);
     }
   };
 
@@ -240,9 +244,9 @@ function App() {
               className="refresh-stats-btn"
               onClick={refreshStats}
               title="Refresh Statistics"
-              disabled={loading}
+              disabled={statsLoading}
             >
-              <RefreshCw size={20} className={loading ? "spin" : ""} />
+              <RefreshCw size={20} className={statsLoading ? "spin" : ""} />
             </button>
           </div>
 
@@ -285,7 +289,7 @@ function App() {
         {activeTab === "graph" ? (
           <GraphViewer
             externalFilter={externalFilter}
-            onFilterUsed={() => setExternalFilter(null)}
+            onFilterUsed={clearExternalFilter}
             theme={theme}
           />
         ) : (

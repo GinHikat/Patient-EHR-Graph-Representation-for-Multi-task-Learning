@@ -172,7 +172,7 @@ const GraphViewer = ({
     }, 300);
 
     return () => clearTimeout(timer);
-  }, [nodeLimit, selectedTypes, searchId]);
+  }, [nodeLimit, JSON.stringify(selectedTypes), JSON.stringify(selectedRels), searchId]);
 
   const handleSearchNode = async (e) => {
     if (e) e.preventDefault();
@@ -197,59 +197,61 @@ const GraphViewer = ({
       const response = await axios.get(
         `${API_BASE_URL}/node/${searchId.trim()}?${params.toString()}`,
       );
-      if (response.data && response.data.nodes.length > 0) {
-        const newData = response.data;
-        setGraphData(newData);
+        if (response.data && response.data.nodes.length > 0) {
+          const newData = response.data;
+          setGraphData(newData);
 
-        const targetNodeId = searchId.trim().toLowerCase();
-        const firstNode =
-          newData.nodes.find(
-            (n) =>
-              n.id.toLowerCase() === targetNodeId ||
-              n.properties.id?.toString().toLowerCase() === targetNodeId ||
-              n.properties.title?.toLowerCase() === targetNodeId ||
-              n.properties.Title?.toLowerCase() === targetNodeId ||
-              n.properties.name?.toLowerCase() === targetNodeId,
-          ) || newData.nodes[0];
+          const targetNodeId = searchId.trim().toLowerCase();
+          const firstNode =
+            newData.nodes.find(
+              (n) =>
+                n.id.toLowerCase() === targetNodeId ||
+                n.properties.id?.toString().toLowerCase() === targetNodeId ||
+                n.properties.title?.toLowerCase() === targetNodeId ||
+                n.properties.Title?.toLowerCase() === targetNodeId ||
+                n.properties.name?.toLowerCase() === targetNodeId,
+            ) || newData.nodes[0];
 
-        setSelectedNode(firstNode);
+          setSelectedNode(firstNode);
 
-        // Extract highlights from new data
-        const connectedNodes = new Set();
-        const connectedLinks = new Set();
-        connectedNodes.add(firstNode);
-        newData.links.forEach((link) => {
-          if (
-            link.source === firstNode.id ||
-            (link.source && link.source.id === firstNode.id)
-          ) {
-            connectedLinks.add(link);
-            const target = newData.nodes.find(
-              (n) => n.id === (link.target.id || link.target),
-            );
-            if (target) connectedNodes.add(target);
-          }
-          if (
-            link.target === firstNode.id ||
-            (link.target && link.target.id === firstNode.id)
-          ) {
-            connectedLinks.add(link);
-            const source = newData.nodes.find(
-              (n) => n.id === (link.source.id || link.source),
-            );
-            if (source) connectedNodes.add(source);
-          }
-        });
-        setHighlightNodes(connectedNodes);
-        setHighlightLinks(connectedLinks);
+          // Extract highlights from new data
+          const connectedNodes = new Set();
+          const connectedLinks = new Set();
+          connectedNodes.add(firstNode);
+          newData.links.forEach((link) => {
+            if (
+              link.source === firstNode.id ||
+              (link.source && link.source.id === firstNode.id)
+            ) {
+              connectedLinks.add(link);
+              const target = newData.nodes.find(
+                (n) => n.id === (link.target.id || link.target),
+              );
+              if (target) connectedNodes.add(target);
+            }
+            if (
+              link.target === firstNode.id ||
+              (link.target && link.target.id === firstNode.id)
+            ) {
+              connectedLinks.add(link);
+              const source = newData.nodes.find(
+                (n) => n.id === (link.source.id || link.source),
+              );
+              if (source) connectedNodes.add(source);
+            }
+          });
+          setHighlightNodes(connectedNodes);
+          setHighlightLinks(connectedLinks);
 
-        // Centering will happen after simulation starts
-        setTimeout(() => {
-          if (fgRef.current) {
-            fgRef.current.zoomToFit(1000, 100);
-          }
-        }, 500);
-      }
+          // Centering will happen after simulation starts
+          setTimeout(() => {
+            if (fgRef.current) {
+              fgRef.current.zoomToFit(1000, 100);
+            }
+          }, 500);
+        } else {
+          alert(`No nodes found matching "${searchId}"`);
+        }
     } catch (err) {
       console.error("Failed to find node", err);
       alert("Node not found");
@@ -385,7 +387,9 @@ const GraphViewer = ({
     setPendingNodeLimit(100);
     setSearchId("");
     setSelectedTypes(["All"]);
+    setSelectedRels([]);
     setNodeLimit(100);
+    resetSelection();
   };
 
   return (
@@ -447,8 +451,9 @@ const GraphViewer = ({
                 className="reset-view-btn"
                 onClick={resetFilters}
                 title="Reset Filters & View"
+                disabled={loading}
               >
-                <RefreshCw size={16} />
+                <RefreshCw size={16} className={loading && !searchLoading ? "spin" : ""} />
               </button>
             </div>
             <div className="search-pane">
