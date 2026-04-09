@@ -5,6 +5,96 @@ UMLS_API_KEY = os.getenv('UML_API_KEY')
 UMLS_BASE = "https://utslogin.nlm.nih.gov/cas/v1"
 UMLS_CONTENT = "https://uts-ws.nlm.nih.gov/rest"
 
+def load_ccsr_mappings(dx_path, pr_path):
+    """
+    Loads and cleans CCSR mapping files for Diagnoses and Procedures.
+    Use for ICD 10 only
+    """
+    # Diagnosis (DX_CCSR)
+    dx_ccsr = pd.read_csv(dx_path, skipinitialspace=True)
+    
+    # Strip single quotes from column names
+    dx_ccsr.columns = [c.strip("'") for c in dx_ccsr.columns]
+    
+    # Select and clean relevant columns
+    dx_map = dx_ccsr[['ICD-10-CM CODE', 'Default CCSR CATEGORY IP', 'Default CCSR CATEGORY DESCRIPTION IP']].copy()
+    dx_map.rename(columns={
+        'ICD-10-CM CODE': 'icd_code',
+        'Default CCSR CATEGORY IP': 'ccsr_category',
+        'Default CCSR CATEGORY DESCRIPTION IP': 'ccsr_description'
+    }, inplace=True)
+    
+    # Strip single quotes from the actual data values
+    for col in dx_map.columns:
+        dx_map[col] = dx_map[col].astype(str).str.strip("'")
+
+    # Procedures (PRCCSR)
+    pr_ccsr = pd.read_csv(pr_path, skipinitialspace=True)
+    pr_ccsr.columns = [c.strip("'") for c in pr_ccsr.columns]
+    
+    pr_map = pr_ccsr[['ICD-10-PCS', 'PRCCSR', 'PRCCSR DESCRIPTION', 'CLINICAL DOMAIN']].copy()
+    pr_map.rename(columns={
+        'ICD-10-PCS': 'icd_code',
+        'PRCCSR': 'ccsr_category',
+        'PRCCSR DESCRIPTION': 'ccsr_description',
+        'CLINICAL DOMAIN': 'clinical_domain'
+    }, inplace=True)
+    
+    for col in pr_map.columns:
+        pr_map[col] = pr_map[col].astype(str).str.strip("'")
+    return dx_map, pr_map
+
+def load_ccs_mappings(dx_9_path, pr_9_path):
+    """
+    Loads and cleans CCS mapping files for ICD-9.
+    Handles the CSV format for diagnoses and the TXT format for procedures.
+    Use for ICD 9 only
+    """
+    # ICD-9 Diagnoses (CSV)
+    dx_ccs = pd.read_csv(dx_9_path, skipinitialspace=True)
+    
+    # Strip single quotes from column names and values
+    dx_ccs.columns = [c.strip("'") for c in dx_ccs.columns]
+    for col in dx_ccs.columns:
+        dx_ccs[col] = dx_ccs[col].astype(str).str.strip("'").str.strip()
+
+    # Rename to match your project's common schema
+    dx_map = dx_ccs[['ICD-9-CM CODE', 'CCS CATEGORY', 'CCS CATEGORY DESCRIPTION']].copy()
+    dx_map.rename(columns={
+        'ICD-9-CM CODE': 'icd_code',
+        'CCS CATEGORY': 'ccs_category',  # Keep naming consistent with ICD-10 if desired
+        'CCS CATEGORY DESCRIPTION': 'ccs_description'
+    }, inplace=True)
+
+    # ICD-9 Procedures (TXT)
+    # The TXT file uses a 'Category ID - Description' header followed by code lists
+    pr_rows = []
+    current_cat_id = None
+    current_cat_desc = None
+    
+    with open(pr_9_path, 'r') as f:
+        for line in f:
+            if not line.strip(): continue
+            
+            # Check if line starts with a category number (e.g., '1   Incision...')
+            match = re.match(r'^(\d+)\s+(.*)', line)
+            if match:
+                current_cat_id = match.group(1)
+                current_cat_desc = match.group(2).strip()
+            elif current_cat_id:
+                # This line contains ICD codes separated by spaces
+                codes = line.strip().split()
+                for code in codes:
+                    pr_rows.append({
+                        'icd_code': code,
+                        'ccs_category': current_cat_id,
+                        'ccs_description': current_cat_desc
+                    })
+    
+    pr_map = pd.DataFrame(pr_rows)
+
+    return dx_map, pr_map
+
 class DatabaseExtract:
     def __init__(self):
         self._tgt_url = None
