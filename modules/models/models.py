@@ -1,8 +1,10 @@
 import os
 import torch
 import numpy as np
-from transformers import AutoTokenizer, AutoModel, BertTokenizer, BertModel
+from transformers import AutoTokenizer, AutoModel, BertTokenizer, BertModel, AutoModelForSequenceClassification
 from typing import List, Union, Optional, Dict
+from torch.utils.data import Dataset
+from sklearn.metrics import f1_score, accuracy_score, precision_score, recall_score
 
 model_dict = {
     1: 'BAAI/bge-large-en-v1.5', # 768
@@ -92,6 +94,105 @@ class EmbeddingModels:
     def get_models(self) -> Dict[int, str]:
         return model_dict
 
+class RadiologyDataset(Dataset):
+    def __init__(self, texts, labels, tokenizer, max_length=1024):
+        self.texts = texts
+        self.labels = labels
+        self.tokenizer = tokenizer
+        self.max_length = max_length
+
+    def __len__(self):
+        return len(self.texts)
+
+    def __getitem__(self, idx):
+        text = str(self.texts[idx])
+        label = torch.tensor(self.labels[idx], dtype=torch.float32)
+
+        encoding = self.tokenizer(
+            text,
+            add_special_tokens=True,
+            max_length=self.max_length,
+            padding='max_length',
+            truncation=True,
+            return_tensors='pt'
+        )
+
+        return {
+            'input_ids': encoding['input_ids'].flatten(),
+            'attention_mask': encoding['attention_mask'].flatten(),
+            'labels': label
+        }
+
 class ProcedureModel:
-    def __init__(self):
-        pass
+    def __init__(self, num_labels: int, model_name: str = "yikuan8/Clinical-Longformer", device: Optional[str] = None):
+        if device:
+            self.device = torch.device(device)
+        else:
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            
+        print(f"Using device: {self.device}")
+        
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.model = AutoModelForSequenceClassification.from_pretrained(
+            model_name,
+            num_labels=num_labels,
+            problem_type="multi_label_classification"
+        )
+        self.model.to(self.device)
+
+    def compute_metrics(self, eval_preds, threshold: float = 0.5):
+        logits, labels = eval_preds
+        probs = 1 / (1 + np.exp(-logits))
+        
+        # Current fixed threshold metrics
+        predictions = (probs > threshold).astype(int)
+        
+        metrics = {
+            'f1_macro': f1_score(labels, predictions, average='macro', zero_division=0),
+            'f1_micro': f1_score(labels, predictions, average='micro', zero_division=0),
+            'precision_macro': precision_score(labels, predictions, average='macro', zero_division=0),
+            'recall_macro': recall_score(labels, predictions, average='macro', zero_division=0),
+            'max_p': np.max(probs),
+            'avg_truth_p': np.mean(probs[labels == 1]) if np.any(labels == 1) else 0.0,
+            'accuracy': accuracy_score(labels, predictions)
+        }
+        
+        # Searching for the best global threshold (using F1 Micro)
+        best_f1 = 0
+        best_threshold = 0.5
+        
+        for t in np.arange(0.05, 0.55, 0.05):
+            t_preds = (probs > t).astype(int)
+            f1 = f1_score(labels, t_preds, average='micro', zero_division=0)
+            if f1 > best_f1:
+                best_f1 = f1
+                best_threshold = t
+        
+        metrics['best_threshold'] = best_threshold
+        metrics['best_f1_micro'] = best_f1
+        
+        return metrics
+
+    def predict(self, texts: Union[str, List[str]], threshold: float = 0.5, batch_size: int = 8) -> np.ndarray:
+        if isinstance(texts, str): texts = [texts]
+        
+        self.model.eval()
+        all_preds = []
+        
+        for i in range(0, len(texts), batch_size):
+            batch_texts = texts[i:i+batch_size]
+            inputs = self.tokenizer(
+                batch_texts,
+                padding=True,
+                truncation=True,
+                max_length=1024,
+                return_tensors="pt"
+            ).to(self.device)
+            
+            with torch.no_grad():
+                outputs = self.model(**inputs)
+                probs = torch.sigmoid(outputs.logits)
+                preds = (probs > threshold).cpu().numpy().astype(int)
+                all_preds.append(preds)
+                
+        return np.vstack(all_preds) if all_preds else np.array([])
