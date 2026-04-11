@@ -2,120 +2,125 @@ import re
 import pandas as pd
 from tqdm import tqdm
 
-def structural_split_radiology(text):
-    headers = ["EXAMINATION", "INDICATION", "TECHNIQUE", "COMPARISON", "FINDINGS", 'IMPRESSION']
-    pattern = r'(?=' + '|'.join(headers) + r')'
+class Extractor:
+    def __init__(self):
+        pass
 
-    sections = re.split(pattern, text)
-    sections = [s.strip() for s in sections if s.strip()]
+    def structural_split_radiology(self, text):
+        headers = ["EXAMINATION", "INDICATION", "TECHNIQUE", "COMPARISON", "FINDINGS", 'IMPRESSION']
+        pattern = r'(?=' + '|'.join(headers) + r')'
 
-    return sections 
+        sections = re.split(pattern, text)
+        sections = [s.strip() for s in sections if s.strip()]
 
-def structural_split_discharge(text):
-    headers = [
-        "Allergies", "Attending", "Chief Complaint", "Major Surgical or Invasive Procedure",
-        "History of Present Illness", "Past Medical History", "Social History", "Family History",
-        "Physical Exam", "Pertinent Results", "Brief Hospital Course", "Discharge Diagnosis",
-        "Discharge Medications", "Discharge Disposition", "Discharge Condition", "Discharge Instructions",
-        "Followup Instructions"
-    ]
-    pattern = r'(?=' + '|'.join(headers) + r')'
+        return sections 
 
-    sections = re.split(pattern, text)
-    sections = [s.strip() for s in sections if s.strip()]
+    def structural_split_discharge(self, text):
+        headers = [
+            "Allergies", "Attending", "Chief Complaint", "Major Surgical or Invasive Procedure",
+            "History of Present Illness", "Past Medical History", "Social History", "Family History",
+            "Physical Exam", "Pertinent Results", "Brief Hospital Course", "Discharge Diagnosis",
+            "Discharge Medications", "Discharge Disposition", "Discharge Condition", "Discharge Instructions",
+            "Followup Instructions"
+        ]
+        pattern = r'(?=' + '|'.join(headers) + r')'
 
-    return sections 
+        sections = re.split(pattern, text)
+        sections = [s.strip() for s in sections if s.strip()]
 
-def structural_df_radiology(text):
-    sections = structural_split_radiology(text)
-    result = {"Text": text}
-    for section in sections:
-        match = re.match(r'(EXAMINATION|INDICATION|TECHNIQUE|COMPARISON|FINDINGS|IMPRESSION)[:\s]*(.*)', section, re.DOTALL)
-        if match:
-            key = match.group(1).capitalize()
-            value = match.group(2).strip()
-            result[key] = value
+        return sections 
 
-    df = pd.DataFrame([result])
-    
-    cols = df.columns
-    df[cols] = df[cols].apply(lambda x: x.str.replace('_', '', regex=False).str.strip())
+    def structural_df_radiology(self, text):
+        sections = self.structural_split_radiology(text)
+        result = {"Text": text}
+        for section in sections:
+            match = re.match(r'(EXAMINATION|INDICATION|TECHNIQUE|COMPARISON|FINDINGS|IMPRESSION)[:\s]*(.*)', section, re.DOTALL)
+            if match:
+                key = match.group(1).capitalize()
+                value = match.group(2).strip()
+                result[key] = value
 
-    cols = ["Text", "Examination", "Indication", "Technique", "Comparison", "Findings", "Impression"]
+        df = pd.DataFrame([result])
+        
+        cols = df.columns
+        df[cols] = df[cols].apply(lambda x: x.str.replace('_', '', regex=False).str.replace('\n', ' ', regex=False).str.strip())
 
-    df['Technique'] = df['Technique'].str.title()
+        cols = ["Text", "Examination", "Indication", "Technique", "Comparison", "Findings", "Impression"]
 
-    return df[[c for c in cols if c in df.columns]]
+        df['Technique'] = df['Technique'].str.title()
 
-def structural_df_discharge(text):
-    headers = [
-        "Allergies", "Attending", "Chief Complaint", "Major Surgical or Invasive Procedure",
-        "History of Present Illness", "Past Medical History", "Social History", "Family History",
-        "Physical Exam", "Pertinent Results", "Brief Hospital Course", "Discharge Diagnosis",
-        "Discharge Medications", "Discharge Disposition", "Discharge Condition", "Discharge Instructions",
-        "Followup Instructions"
-    ]
-    sections = structural_split_discharge(text)
-    result = {"Text": text}
-    pattern = r'(' + '|'.join(headers) + r')[:\s]*(.*)'
-    for section in sections:
-        match = re.match(pattern, section, re.DOTALL)
-        if match:
-            key = match.group(1)
-            value = match.group(2).strip()
-            result[key] = value
+        return df[[c for c in cols if c in df.columns]]
 
-    df = pd.DataFrame([result])
+    def structural_df_discharge(self, text):
+        headers = [
+            "Allergies", "Attending", "Chief Complaint", "Major Surgical or Invasive Procedure",
+            "History of Present Illness", "Past Medical History", "Social History", "Family History",
+            "Physical Exam", "Pertinent Results", "Brief Hospital Course", "Discharge Diagnosis",
+            "Discharge Medications", "Discharge Disposition", "Discharge Condition", "Discharge Instructions",
+            "Followup Instructions"
+        ]
+        sections = self.structural_split_discharge(text)
+        result = {"Text": text}
+        pattern = r'(' + '|'.join(headers) + r')[:\s]*(.*)'
+        for section in sections:
+            match = re.match(pattern, section, re.DOTALL)
+            if match:
+                key = match.group(1)
+                value = match.group(2).strip()
+                result[key] = value
 
-    cols = df.columns
-    df[cols] = df[cols].apply(lambda x: x.str.replace('_', '', regex=False).str.strip())
+        df = pd.DataFrame([result])
 
-    cols = ["Text"] + headers
+        cols = df.columns
+        df[cols] = df[cols].apply(lambda x: x.str.replace('_', '', regex=False).str.replace('\n', ' ', regex=False).str.strip().str.replace(r'^[^a-zA-Z0-9]+', '', regex=True))
 
-    return df[[c for c in cols if c in df.columns]]
+        cols = ["Text"] + headers
 
-def batch_extracting_radiology(df):
-    structured_rows = []
 
-    for text in tqdm(df['text']):
-        row = structural_df_radiology(text)
-        structured_rows.append(row.iloc[0] if len(row) > 0 else pd.Series())
+        return df[[c for c in cols if c in df.columns]]
 
-    structured_df_all = pd.DataFrame(structured_rows).reset_index(drop=True)
-    structured_df_all = structured_df_all.drop(columns=['Text'], errors='ignore')
+    def batch_extracting_radiology(self, df):
+        structured_rows = []
 
-    df = pd.concat([df.reset_index(drop=True), structured_df_all], axis=1)
+        for text in tqdm(df['text']):
+            row = self.structural_df_radiology(text)
+            structured_rows.append(row.iloc[0] if len(row) > 0 else pd.Series())
 
-    cols = ['Indication', 'Technique', 'Comparison', 'Findings', 'Impression']
-    for col in cols:
-        if col in df.columns:
-            df[col] = df[col].astype(str).str.replace('_', '', regex=False).str.strip()
+        structured_df_all = pd.DataFrame(structured_rows).reset_index(drop=True)
+        structured_df_all = structured_df_all.drop(columns=['Text'], errors='ignore')
 
-    return df
+        df = pd.concat([df.reset_index(drop=True), structured_df_all], axis=1)
 
-def batch_extracting_discharge(df):
-    headers = [
-        "Allergies", "Attending", "Chief Complaint", "Major Surgical or Invasive Procedure",
-        "History of Present Illness", "Past Medical History", "Social History", "Family History",
-        "Physical Exam", "Pertinent Results", "Brief Hospital Course", "Discharge Diagnosis",
-        "Discharge Medications", "Discharge Disposition", "Discharge Condition", "Discharge Instructions",
-        "Followup Instructions"
-    ]
-    structured_rows = []
+        cols = ['Indication', 'Technique', 'Comparison', 'Findings', 'Impression']
+        for col in cols:
+            if col in df.columns:
+                df[col] = df[col].astype(str).str.replace('_', '', regex=False).str.strip()
 
-    for text in tqdm(df['text']):
-        row = structural_df_discharge(text)
-        structured_rows.append(row.iloc[0] if len(row) > 0 else pd.Series())
+        return df
 
-    structured_df_all = pd.DataFrame(structured_rows).reset_index(drop=True)
-    structured_df_all = structured_df_all.drop(columns=['Text'], errors='ignore')
+    def batch_extracting_discharge(self, df):
+        headers = [
+            "Allergies", "Attending", "Chief Complaint", "Major Surgical or Invasive Procedure",
+            "History of Present Illness", "Past Medical History", "Social History", "Family History",
+            "Physical Exam", "Pertinent Results", "Brief Hospital Course", "Discharge Diagnosis",
+            "Discharge Medications", "Discharge Disposition", "Discharge Condition", "Discharge Instructions",
+            "Followup Instructions"
+        ]
+        structured_rows = []
 
-    df = pd.concat([df.reset_index(drop=True), structured_df_all], axis=1)
+        for text in tqdm(df['text']):
+            row = self.structural_df_discharge(text)
+            structured_rows.append(row.iloc[0] if len(row) > 0 else pd.Series())
 
-    # Clean the extracted text columns
-    for col in headers:
-        if col in df.columns:
-            df[col] = df[col].astype(str).str.replace('_', '', regex=False).str.strip()
+        structured_df_all = pd.DataFrame(structured_rows).reset_index(drop=True)
+        structured_df_all = structured_df_all.drop(columns=['Text'], errors='ignore')
 
-    return df
+        df = pd.concat([df.reset_index(drop=True), structured_df_all], axis=1)
+
+        # Clean the extracted text columns
+        for col in headers:
+            if col in df.columns:
+                df[col] = df[col].astype(str).str.replace('_', '', regex=False).str.strip()
+
+        return df
 
