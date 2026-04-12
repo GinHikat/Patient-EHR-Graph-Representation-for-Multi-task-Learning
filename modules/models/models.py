@@ -5,12 +5,20 @@ from transformers import AutoTokenizer, AutoModel, BertTokenizer, BertModel, Aut
 from typing import List, Union, Optional, Dict
 from torch.utils.data import Dataset
 from sklearn.metrics import f1_score, accuracy_score, precision_score, recall_score
+from transformers import pipeline
+import pandas as pd
 
 model_dict = {
     1: 'BAAI/bge-large-en-v1.5', # 768
     2: 'pritamdeka/S-PubMedBert-MS-MARCO', # 768
     3: 'ncbi/MedCPT-Query-Encoder', # 768
     4: 'NeuML/pubmedbert-base-embeddings' # 768
+}
+
+ner_model_dict = {
+    1: 'pruas/BENT-PubMedBERT-NER-Disease',
+    2: 'G-Med-NLP/BioLinkBERT-large-NER',
+    3: 'Helios9/BioMed_NER'
 }
 
 class EmbeddingModels:
@@ -196,3 +204,94 @@ class ProcedureModel:
                 all_preds.append(preds)
                 
         return np.vstack(all_preds) if all_preds else np.array([])
+
+class NERModel:
+    def __init__(self, model_choice: Union[int, str] = 1, device: Optional[str] = None):
+        model_name = ner_model_dict.get(model_choice, model_choice) if isinstance(model_choice, int) else model_choice
+        
+        if device:
+            # transformers pipeline uses 0, 1, etc for CUDA or -1 for CPU
+            self.device_idx = 0 if "cuda" in str(device).lower() else -1
+        else:
+            self.device_idx = 0 if torch.cuda.is_available() else -1
+            
+        print(f"Loading NER model: {model_name} on device: {'cuda' if self.device_idx >= 0 else 'cpu'}")
+        
+        self.pipeline = pipeline(
+            "ner", 
+            model=model_name, 
+            aggregation_strategy="simple", 
+            device=self.device_idx
+        )
+
+    def predict(self, text: Union[str, List[str]]) -> Union[List[Dict], List[List[Dict]]]:
+        """
+        Extracts clinical entities (Disease, Drug, etc.) from the given text.
+        """
+        if not text:
+            return []
+        
+        return self.pipeline(text)
+
+    def predict_df(self, text: Union[str, List[str]]) -> pd.DataFrame:
+        """
+        Converts the NER prediction results into a pandas DataFrame and merges consecutive tokens.
+        """
+        results = self.predict(text)
+        if not results:
+            return pd.DataFrame(columns=['text', 'start', 'end', 'score', 'group'])
+
+        # Handle batch results (list of lists)
+        if len(results) > 0 and isinstance(results[0], list):
+            data = [item for sublist in results for item in sublist]
+        else:
+            data = results
+
+        if not data:
+            return pd.DataFrame(columns=['text', 'start', 'end', 'score', 'group'])
+
+        # Merge logic: if prev.end == next.start AND groups match, concat them
+        merged_data = []
+        current = data[0].copy()
+        
+        for i in range(1, len(data)):
+            next_entry = data[i]
+            # Match boundary AND entity group to avoid merging separate entities like 'HCV' and 'cirrhosis'
+            if (current['end'] == next_entry['start'] and 
+                current.get('entity_group') == next_entry.get('entity_group')):
+                
+                next_word = next_entry['word']
+                # Handle BERT-style subword markers
+                if next_word.startswith("##"):
+                    next_word = next_word[2:]
+                
+                current['word'] += next_word
+                current['end'] = next_entry['end']
+                current['score'] = (current['score'] + next_entry['score']) / 2
+            else:
+                merged_data.append(current)
+                current = next_entry.copy()
+        merged_data.append(current)
+
+        df = pd.DataFrame(merged_data)
+
+        # Map pipeline keys to requested column names
+        column_mapping = {
+            'word': 'text',
+            'entity_group': 'group',
+            'start': 'start',
+            'end': 'end',
+            'score': 'score'
+        }
+        
+        df = df.rename(columns=column_mapping)
+        
+        # Ensure all requested columns exist
+        for col in ['text', 'start', 'end', 'score', 'group']:
+            if col not in df.columns:
+                df[col] = None
+        
+        return df[['text', 'start', 'end', 'score', 'group']]
+
+    def get_models(self) -> Dict[int, str]:
+        return ner_model_dict

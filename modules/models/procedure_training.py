@@ -26,16 +26,18 @@ warnings.filterwarnings("ignore")
 logging.getLogger("transformers").setLevel(logging.ERROR)
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-project_root = os.path.abspath(os.path.join(os.getcwd(), ".."))
+# Define paths relative to the script's location
+script_dir = os.path.dirname(os.path.abspath(__file__))
+temp_root = os.path.dirname(script_dir) # i.e., /home/hngoc/gin/Temp
 from modules.models import ProcedureModel, RadiologyDataset
 
-data_dir = os.path.join(project_root, 'gin', 'data', 'Note')
+data_dir = os.path.join(temp_root, 'data', 'Note')
 cleaned_data_dir = os.path.join(data_dir, 'cleaned')
 
-def main(load_dir=None):
+def main(load_dir=None, truncation_level=200, epochs=15):
     # Determine the run folder
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    models_root = os.path.join(script_dir, "models")
+    gin_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    models_root = os.path.join(gin_root, "models")
     os.makedirs(models_root, exist_ok=True)
     existing_runs = [d for d in os.listdir(models_root) if d.startswith("run_") and os.path.isdir(os.path.join(models_root, d))]
     
@@ -61,7 +63,7 @@ def main(load_dir=None):
     df = pd.read_csv(os.path.join(cleaned_data_dir, 'procedure_final.csv'))
     df['category'] = df['category'].apply(ast.literal_eval)
 
-    truncation_level = 150
+    # truncation_level is now passed from args
     print(f"Truncating categories with less than {truncation_level} occurrences...")
 
     unique_categories = df['category'].explode().value_counts()
@@ -119,12 +121,18 @@ def main(load_dir=None):
                     if wf.endswith(".safetensors"):
                         try:
                             from safetensors.torch import load_file
-                            pm.model.load_state_dict(load_file(wf_path, device=str(pm.device)))
+                            state_dict = load_file(wf_path, device=str(pm.device))
+                            # Handle potential key mismatches (gamma/beta vs weight/bias)
+                            state_dict = {k.replace(".gamma", ".weight").replace(".beta", ".bias"): v for k, v in state_dict.items()}
+                            pm.model.load_state_dict(state_dict)
                             found = True
                         except ImportError:
                             print("safetensors library not found. Please install it to load .safetensors files.")
                     else:
-                        pm.model.load_state_dict(torch.load(wf_path, map_location=pm.device))
+                        state_dict = torch.load(wf_path, map_location=pm.device)
+                        # Handle potential key mismatches (gamma/beta vs weight/bias)
+                        state_dict = {k.replace(".gamma", ".weight").replace(".beta", ".bias"): v for k, v in state_dict.items()}
+                        pm.model.load_state_dict(state_dict)
                         found = True
                     
                     if found:
@@ -144,8 +152,8 @@ def main(load_dir=None):
     val_dataset = RadiologyDataset(val_df['text'].tolist(), val_df['labels'].tolist(), pm.tokenizer)
     test_dataset = RadiologyDataset(test_df['text'].tolist(), test_df['labels'].tolist(), pm.tokenizer)
 
-    BATCH_SIZE = 4
-    ACCUMULATION_STEPS = 4  # New: Accumualte gradients over 4 steps (Effective Batch Size = 16)
+    BATCH_SIZE = 8
+    ACCUMULATION_STEPS = 4  
     
     # Optimized DataLoaders
     train_loader = DataLoader(
@@ -168,8 +176,7 @@ def main(load_dir=None):
         pin_memory=True
     )
 
-    # Training configuration
-    EPOCHS = 10
+    EPOCHS = epochs
     
     # Use 8-bit Optimizer if available (saves VRAM on optimizer states)
     if bnb:
@@ -310,6 +317,12 @@ def main(load_dir=None):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Training procedure classifier")
     parser.add_argument("--load_dir", type=str, default=None, help="Name of the folder in ./models to load state_dict from")
+    parser.add_argument("--truncation_level", type=int, default=200)
+    parser.add_argument("--epochs", type=int, default=15)
     args = parser.parse_args()
     
-    main(load_dir=args.load_dir)
+    main(
+        load_dir=args.load_dir, 
+        truncation_level=args.truncation_level, 
+        epochs=args.epochs
+    )
