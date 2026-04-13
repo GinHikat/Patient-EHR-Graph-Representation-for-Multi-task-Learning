@@ -34,8 +34,8 @@ from modules.models import ProcedureModel, RadiologyDataset
 data_dir = os.path.join(temp_root, 'data', 'Note')
 cleaned_data_dir = os.path.join(data_dir, 'cleaned')
 
-def main(load_dir=None, truncation_level=200, epochs=15):
-    # Determine the run folder
+def main(load_dir=None, truncation_level=200, others_limit=None, epochs=15):
+    
     gin_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     models_root = os.path.join(gin_root, "models")
     os.makedirs(models_root, exist_ok=True)
@@ -46,32 +46,52 @@ def main(load_dir=None, truncation_level=200, epochs=15):
         if len(parts) >= 2 and parts[1].isdigit():
             return int(parts[1])
         return 0
-    
-    if existing_runs:
-        last_i = max(get_run_idx(r) for r in existing_runs)
-        next_i = last_i + 1
-    else:
-        next_i = 1
-        
-    timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
-    run_folder_name = f"run_{next_i}_{timestamp}"
-    save_path = os.path.join(models_root, run_folder_name)
-    print(f"Results will be saved to: {save_path}")
+
 
     # Load dataset
     print("Loading dataset...")
-    df = pd.read_csv(os.path.join(cleaned_data_dir, 'procedure_final.csv'))
+    csv_path = os.path.join(cleaned_data_dir, 'procedure_final.csv') 
+    df = pd.read_csv(csv_path)
     df['category'] = df['category'].apply(ast.literal_eval)
 
-    # truncation_level is now passed from args
+    if 'text' not in df.columns:
+        raise KeyError("Dataset must contain a 'text' column.")
+
     print(f"Truncating categories with less than {truncation_level} occurrences...")
 
     unique_categories = df['category'].explode().value_counts()
     rare_cats = set(unique_categories[unique_categories <= truncation_level].index)
 
+    # Map rare categories to 'Other' and deduplicate
     df['category'] = df['category'].apply(
-        lambda cats: [c if c not in rare_cats else 'Other' for c in cats]
+        lambda cats: list(set([c if c not in rare_cats else 'Other' for c in cats]))
     )
+
+    # Limit 'Other' label to avoid extreme imbalance
+    # Use 2x truncation_level as the limit if not specified
+    if others_limit is None:
+        others_limit = 2 * truncation_level
+        
+    if others_limit is not None:
+        has_other = df['category'].apply(lambda cats: 'Other' in cats)
+        other_indices = df[has_other].index
+        
+        if len(other_indices) > others_limit:
+            print(f"Limiting 'Other' instances from {len(other_indices)} to at most {others_limit}...")
+            np.random.seed(42)
+            keep_indices = set(np.random.choice(other_indices, others_limit, replace=False))
+            remove_indices = other_indices.difference(pd.Index(list(keep_indices)))
+            
+            # Remove 'Other' from rows not selected to keep it
+            df.loc[remove_indices, 'category'] = df.loc[remove_indices, 'category'].apply(
+                lambda cats: [c for c in cats if c != 'Other']
+            )
+            
+            # Drop rows that now have no labels left
+            initial_count = len(df)
+            df = df[df['category'].apply(len) > 0].reset_index(drop=True)
+            if initial_count > len(df):
+                print(f"Dropped {initial_count - len(df)} samples that had no labels left after limiting 'Other'.")
 
     # Encode labels
     print("Encoding labels...")
@@ -80,6 +100,10 @@ def main(load_dir=None, truncation_level=200, epochs=15):
     
     label_dictionary = {idx: class_name for idx, class_name in enumerate(mlb.classes_)}
     print(f"Total Unique Labels Discovered: {len(label_dictionary)}")
+
+    run_folder_name = f"procedure_run_{truncation_level}_{len(label_dictionary)}"
+    save_path = os.path.join(models_root, run_folder_name)
+    print(f"Results will be saved to: {save_path}")
     
     df['labels'] = list(binary_labels.astype(float))
 
@@ -318,11 +342,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Training procedure classifier")
     parser.add_argument("--load_dir", type=str, default=None, help="Name of the folder in ./models to load state_dict from")
     parser.add_argument("--truncation_level", type=int, default=200)
+    parser.add_argument("--others_limit", type=int, default=None, help="Maximum number of 'Other' labels to keep (defaults to 2x truncation_level)")
     parser.add_argument("--epochs", type=int, default=15)
     args = parser.parse_args()
     
     main(
         load_dir=args.load_dir, 
         truncation_level=args.truncation_level, 
+        others_limit=args.others_limit,
         epochs=args.epochs
     )
