@@ -13,3 +13,5 @@ plan/
 notebooks/*
 
 *.ipynb
+
+.claude/

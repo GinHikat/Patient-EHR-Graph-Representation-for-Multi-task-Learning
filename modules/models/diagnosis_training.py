@@ -27,18 +27,18 @@ logging.getLogger("transformers").setLevel(logging.ERROR)
 
 # Setup paths
 script_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if project_root not in sys.path:
-    sys.path.append(project_root)
+temp_root = os.path.dirname(script_dir) 
+if temp_root not in sys.path:
+    sys.path.append(temp_root)
 
 from modules.models import ProcedureModel, RadiologyDataset
 
-data_dir = os.path.join(project_root, 'data', 'Note')
+data_dir = os.path.join(temp_root, 'data', 'Note')
 cleaned_data_dir = os.path.join(data_dir, 'cleaned')
 
 def main(load_dir=None, truncation_level=200, others_limit=None, epochs=15):
     # Setup run folder for saving
-    models_root = os.path.join(project_root, "models")
+    models_root = os.path.join(temp_root, "models")
     os.makedirs(models_root, exist_ok=True)
     
     existing_runs = [d for d in os.listdir(models_root) if d.startswith("diagnosis_run_") and os.path.isdir(os.path.join(models_root, d))]
@@ -99,6 +99,13 @@ def main(load_dir=None, truncation_level=200, others_limit=None, epochs=15):
     num_labels = len(mlb.classes_)
     print(f"Total Unique Labels: {num_labels}")
 
+    # Calculate class weights for BCE loss
+    num_positives = binary_labels.sum(axis=0)
+    num_negatives = len(binary_labels) - num_positives
+    class_weights = np.clip(num_negatives / (num_positives + 1e-5), 1.0, 50.0)
+    print(f"Loss weights (first 5): {class_weights[:5]}")
+
+
     # Split dataset
     train_df, temp_df = train_test_split(df, test_size=0.20, random_state=42)
     val_df, test_df = train_test_split(temp_df, test_size=0.50, random_state=42)
@@ -108,6 +115,12 @@ def main(load_dir=None, truncation_level=200, others_limit=None, epochs=15):
     torch.cuda.empty_cache()
     # Reusing ProcedureModel logic as it is a generic multi-label classifier
     pm = ProcedureModel(num_labels=num_labels) 
+    
+    # Save tokenizer and label encoder once at the start
+    print(f"Saving setup files to {save_path}...")
+    import joblib
+    joblib.dump(mlb, os.path.join(save_path, "mlb.pkl"))
+    pm.tokenizer.save_pretrained(save_path)
     
     if load_dir:
         # Load weights logic (omitted for brevity, same as procedure_training.py)
@@ -130,8 +143,12 @@ def main(load_dir=None, truncation_level=200, others_limit=None, epochs=15):
     ACCUMULATION_STEPS = 4
     total_steps = (len(train_loader) // ACCUMULATION_STEPS) * EPOCHS
     scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0, num_training_steps=total_steps)
+    # Use weighted BCE loss to boost confidence for sparse labels
+    pos_weight_tensor = torch.tensor(class_weights, dtype=torch.float32).to(pm.device)
+    loss_fn = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight_tensor)
+    
     scaler = torch.cuda.amp.GradScaler()
-    loss_fn = torch.nn.BCEWithLogitsLoss()
+
 
     # Training loop
     print("Starting Training...")
@@ -204,14 +221,18 @@ def main(load_dir=None, truncation_level=200, others_limit=None, epochs=15):
                 f_run.write(f"{key}: {val:.4f}\n")
             f_run.write("-" * 20 + "\n")
         
+        # Save model state dictionary and pretrained weights every epoch
+        print(f"Saving checkpoint for Epoch {epoch + 1} to {save_path}...")
+        pm.model.save_pretrained(save_path)
+        torch.save(pm.model.state_dict(), os.path.join(save_path, "model_state.pt"))
+
+        
         for key, val in metrics.items():
             print(f"{key}: {val:.4f}")
 
-    # Save Final Model
-    print(f"Saving diagnosis model to {save_path}...")
-    pm.model.save_pretrained(save_path)
-    pm.tokenizer.save_pretrained(save_path)
-    joblib.dump(mlb, os.path.join(save_path, "mlb.pkl"))
+    print("Training Complete!")
+    print(f"Final diagnosis model saved to {save_path}")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Training Diagnosis classifier")
