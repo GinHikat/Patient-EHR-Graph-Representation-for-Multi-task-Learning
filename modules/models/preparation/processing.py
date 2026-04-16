@@ -124,3 +124,16 @@ class Extractor:
 
         return df
 
+    def procedure_input(self, radiology, discharge):
+
+        df_dis = self.structural_df_discharge(discharge)
+        df_rad = self.structural_df_radiology(radiology)
+
+        return df_dis['Major Surgical or Invasive Procedure'], df_rad['Examination'] + ' - ' + df_rad['Indication'] + ' - ' + df_rad['Technique'] + ' - ' + df_rad['Impression']
+
+    def radiology_input(self, radiology, discharge):
+
+        df_dis = self.structural_df_discharge(discharge)
+        df_rad = self.structural_df_radiology(radiology)
+
+        return df_rad['Indication'] + ' - ' + df_rad['Findings'] + ' - ' + df_rad['Impression'], df_dis['History of Present Illness'] + ' - ' + df_dis['Past Medical History'] + ' - ' + df_dis['Brief Hospital Course'] + ' - ' + df_dis['Discharge Diagnosis'] 
