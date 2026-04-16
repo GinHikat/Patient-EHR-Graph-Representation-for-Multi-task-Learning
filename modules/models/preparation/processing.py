@@ -7,6 +7,15 @@ class Extractor:
         pass
 
     def structural_split_radiology(self, text):
+        """
+        Splits a radiology report into its constituent sections based on predefined headers.
+
+        Args:
+            text (str): The raw text of the radiology report.
+
+        Returns:
+            list: A list of strings, each containing a section of the report.
+        """
         headers = ["EXAMINATION", "INDICATION", "TECHNIQUE", "COMPARISON", "FINDINGS", 'IMPRESSION']
         pattern = r'(?=' + '|'.join(headers) + r')'
 
@@ -16,6 +25,15 @@ class Extractor:
         return sections 
 
     def structural_split_discharge(self, text):
+        """
+        Splits a discharge summary into its constituent sections based on predefined headers.
+
+        Args:
+            text (str): The raw text of the discharge summary.
+
+        Returns:
+            list: A list of strings, each containing a section of the summary.
+        """
         headers = [
             "Allergies", "Attending", "Chief Complaint", "Major Surgical or Invasive Procedure",
             "History of Present Illness", "Past Medical History", "Social History", "Family History",
@@ -31,6 +49,15 @@ class Extractor:
         return sections 
 
     def structural_df_radiology(self, text):
+        """
+        Parses a radiology report into a structured pandas DataFrame.
+
+        Args:
+            text (str): The raw text of the radiology report.
+
+        Returns:
+            pandas.DataFrame: A DataFrame with columns for each report section with section name as columns.
+        """
         sections = self.structural_split_radiology(text)
         result = {"Text": text}
         for section in sections:
@@ -52,6 +79,15 @@ class Extractor:
         return df[[c for c in cols if c in df.columns]]
 
     def structural_df_discharge(self, text):
+        """
+        Parses 1 discharge summary into a structured pandas DataFrame.
+
+        Args:
+            text (str): The raw text of the discharge summary.
+
+        Returns:
+            pandas.DataFrame: A DataFrame with columns for each summary section with section names as columns
+        """
         headers = [
             "Allergies", "Attending", "Chief Complaint", "Major Surgical or Invasive Procedure",
             "History of Present Illness", "Past Medical History", "Social History", "Family History",
@@ -80,6 +116,15 @@ class Extractor:
         return df[[c for c in cols if c in df.columns]]
 
     def batch_extracting_radiology(self, df):
+        """
+        Processes a DataFrame of radiology reports, adding structured columns for each report.
+
+        Args:
+            df (pandas.DataFrame): DataFrame containing a 'text' column with raw radiology reports.
+
+        Returns:
+            pandas.DataFrame: The original DataFrame enriched with structured report sections.
+        """
         structured_rows = []
 
         for text in tqdm(df['text']):
@@ -99,6 +144,15 @@ class Extractor:
         return df
 
     def batch_extracting_discharge(self, df):
+        """
+        Processes a DataFrame of discharge summaries, adding structured columns for each summary.
+
+        Args:
+            df (pandas.DataFrame): DataFrame containing a 'text' column with raw discharge summaries.
+
+        Returns:
+            pandas.DataFrame: The original DataFrame enriched with structured summary sections.
+        """
         headers = [
             "Allergies", "Attending", "Chief Complaint", "Major Surgical or Invasive Procedure",
             "History of Present Illness", "Past Medical History", "Social History", "Family History",
@@ -125,6 +179,16 @@ class Extractor:
         return df
 
     def procedure_input(self, radiology, discharge):
+        """
+        Extracts relevant text components for procedure identification from radiology and discharge reports for Procedure extraction model
+
+        Args:
+            radiology (str): The raw text of the radiology report.
+            discharge (str): The raw text of the discharge summary.
+
+        Returns:
+            tuple: A tuple containing (Individual Procedures from Discharge, cleaned Radiology note).
+        """
 
         df_dis = self.structural_df_discharge(discharge)
         df_rad = self.structural_df_radiology(radiology)
@@ -132,6 +196,16 @@ class Extractor:
         return df_dis['Major Surgical or Invasive Procedure'], df_rad['Examination'] + ' - ' + df_rad['Indication'] + ' - ' + df_rad['Technique'] + ' - ' + df_rad['Impression']
 
     def radiology_input(self, radiology, discharge):
+        """
+        Extracts relevant text components for diagnosis identification from radiology and discharge reports for Diagnosis extraction model
+
+        Args:
+            radiology (str): The raw text of the radiology report.
+            discharge (str): The raw text of the discharge summary.
+
+        Returns:
+            tuple: A tuple containing (cleaned Radiology note, cleaned Discharge note).
+        """
 
         df_dis = self.structural_df_discharge(discharge)
         df_rad = self.structural_df_radiology(radiology)
