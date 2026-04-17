@@ -1,6 +1,7 @@
 import pandas as pd 
 import sys, os
 from tqdm import tqdm as tqdm
+import re
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if project_root not in sys.path:
     sys.path.append(project_root)
@@ -25,6 +26,18 @@ from shared_functions.global_functions import *
 
     df['len'] = df['interactions'].apply(lambda x: len(x))
 
+    # Clean Dosages to get only those with numbers
+    def has_number(text):
+        if not isinstance(text, str):
+            return False
+        
+        return bool(re.search(r'\d', text))
+
+    df['dosages'] = df['dosages'].apply(lambda x: [i.strip() for i in x])
+
+    df['dosages_clean'] = df['dosages'].apply(
+        lambda lst: [x for x in lst if has_number(x)] if isinstance(lst, list) else [])
+
     CHECKPOINT_FILE = "checkpoint.txt"
     BATCH_SIZE = 50
 
@@ -42,7 +55,10 @@ from shared_functions.global_functions import *
 
     MERGE (d:Drug:DB:Test {id: row.drugbank_id})
     SET d.name = row.name,
-        d.description = row.description
+        d.description = row.description,
+        d.indication = row.indication,
+        d.max_dosage = row.max_dosage,
+        d.min_dosage = row.min_dosage
 
     WITH d, row
 

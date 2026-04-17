@@ -16,6 +16,85 @@ ns = "{http://www.drugbank.ca}"
 
 records = []
 
+def parse_dosage(dosage_list):
+    
+    def convert_to_mg(value, unit):
+        if value is None:
+            return None
+        
+        if unit == 'mg':
+            return value
+        elif unit == 'g':
+            return value * 1000
+        elif unit in ['mcg', 'ug', 'µg']:
+            return value / 1000
+        else:
+            return None
+
+    def parse_one(text):
+        if not isinstance(text, str):
+            return None
+        
+        text_lower = text.lower()
+        
+        # Extract route
+        route_match = re.search(r'\((.*?)\)', text)
+        route = route_match.group(1).lower() if route_match else None
+        
+        # Extract value + unit
+        dose_match = re.search(r'(\d+\.?\d*)\s*(mg|g|mcg|ug|µg)\b', text_lower)
+        if dose_match:
+            value = float(dose_match.group(1))
+            unit = dose_match.group(2)
+            dose_mg = convert_to_mg(value, unit)
+        else:
+            value, unit, dose_mg = None, None, None
+        
+        # Detect concentration (presence of "/")
+        is_concentration = '/' in text_lower
+        
+        # Extract concentration if present
+        conc_match = re.search(r'(\d+\.?\d*)\s*(mg|g|mcg|ug|µg)\s*/\s*(\d+\.?\d*)\s*(ml)?', text_lower)
+        if conc_match:
+            conc_value = float(conc_match.group(1))
+            conc_unit = conc_match.group(2)
+            conc_vol = float(conc_match.group(3))
+            
+            conc_mg = convert_to_mg(conc_value, conc_unit)
+            
+            # Handle "mg/1" → treat as NOT real concentration
+            if conc_vol == 1:
+                conc_mg, conc_vol = None, None
+                is_concentration = False
+        else:
+            conc_mg, conc_vol = None, None
+        
+        return {
+            'raw': text,
+            'route': route,
+            'dose_mg': dose_mg,          # normalized to mg
+            'conc_mg': conc_mg,          # normalized to mg
+            'conc_vol': conc_vol,
+            'is_concentration': is_concentration
+        }
+    
+    # Handle non-list safely
+    if not isinstance(dosage_list, list):
+        return pd.DataFrame(columns=[
+            'raw', 'route', 'dose_mg', 'conc_mg', 'conc_vol', 'is_concentration'
+        ])
+    
+    parsed = [p for x in dosage_list if isinstance(x, str) 
+          if (p := parse_one(x)) is not None]
+    
+    df = pd.DataFrame(parsed)
+    df = df[df['dose_mg'].notna()]
+
+    max = df['dose_mg'].max()
+    min = df['dose_mg'].min()
+
+    return pd.Series({'max_dosage': max, 'min_dosage': min})
+
 # Check if file exists before processing
 if not os.path.exists(FILE):
     print(f"Error: DrugBank file not found at {FILE}")
@@ -92,10 +171,12 @@ else:
 
     df = pd.DataFrame(records)
 
+    df[['max_dosage', 'min_dosage']] = df['dosages'].apply(parse_dosage)
+
     print("Total drugs:", len(df))
     print("Missing drugbank_id:", df["drugbank_id"].isna().sum())
     # Display sample to verify new fields
     if not df.empty:
         print(df[["drugbank_id", "name", "indication", "dosages"]].head())
     
-df.to_csv(os.path.join(data_dir, "drugbank.csv"), index=False)
+df.to_csv(os.path.join(data_dir, 'DrugBank', "drugbank.csv"), index=False)
