@@ -5,3 +5,6 @@ seaborn
 neo4j
 fastapi
 python-dotenv
+scispacy
+spacy
+quickumls
