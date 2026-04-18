@@ -37,16 +37,10 @@ data_dir = os.path.join(temp_root, 'data', 'Note')
 cleaned_data_dir = os.path.join(data_dir, 'cleaned')
 
 def main(load_dir=None, truncation_level=200, others_limit=None, epochs=15):
-    # Setup run folder for saving
+    # Setup models root
     models_root = os.path.join(temp_root, "models")
     os.makedirs(models_root, exist_ok=True)
-    
-    existing_runs = [d for d in os.listdir(models_root) if d.startswith("diagnosis_run_") and os.path.isdir(os.path.join(models_root, d))]
-    next_i = max([int(r.split('_')[2]) for r in existing_runs] + [0]) + 1
-    timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
-    run_folder_name = f"diagnosis_run_{next_i}_{timestamp}_diagnosis"
-    save_path = os.path.join(models_root, run_folder_name)
-    print(f"Results will be saved to: {save_path}")
+
 
     # Load dataset
     print("Loading dataset...")
@@ -99,6 +93,12 @@ def main(load_dir=None, truncation_level=200, others_limit=None, epochs=15):
     num_labels = len(mlb.classes_)
     print(f"Total Unique Labels: {num_labels}")
 
+    # Setup run folder for saving
+    run_folder_name = f"diagnosis_run_{truncation_level}_{num_labels}"
+    save_path = os.path.join(models_root, run_folder_name)
+    os.makedirs(save_path, exist_ok=True)
+    print(f"Results will be saved to: {save_path}")
+
     # Calculate class weights for BCE loss
     num_positives = binary_labels.sum(axis=0)
     num_negatives = len(binary_labels) - num_positives
@@ -123,8 +123,37 @@ def main(load_dir=None, truncation_level=200, others_limit=None, epochs=15):
     pm.tokenizer.save_pretrained(save_path)
     
     if load_dir:
-        # Load weights logic (omitted for brevity, same as procedure_training.py)
-        pass
+        target_load_dir = os.path.join(models_root, load_dir)
+        if not os.path.exists(target_load_dir):
+            if os.path.exists(load_dir):
+                target_load_dir = load_dir
+            else:
+                print(f"Error: Directory {load_dir} not found.")
+                target_load_dir = None
+        
+        if target_load_dir:
+            weights_files = ["model_state.pt", "model.safetensors", "pytorch_model.bin"]
+            found = False
+            for wf in weights_files:
+                wf_path = os.path.join(target_load_dir, wf)
+                if os.path.exists(wf_path):
+                    print(f"Loading weights from {wf_path}")
+                    if wf.endswith(".safetensors"):
+                        from safetensors.torch import load_file
+                        state_dict = load_file(wf_path, device=str(pm.device))
+                        state_dict = {k.replace(".gamma", ".weight").replace(".beta", ".bias"): v for k, v in state_dict.items()}
+                        pm.model.load_state_dict(state_dict)
+                        found = True
+                    else:
+                        state_dict = torch.load(wf_path, map_location=pm.device)
+                        state_dict = {k.replace(".gamma", ".weight").replace(".beta", ".bias"): v for k, v in state_dict.items()}
+                        pm.model.load_state_dict(state_dict)
+                        found = True
+                    if found: break
+            if not found:
+                print(f"Warning: No weights found in {target_load_dir}")
+    else:
+        print("Starting training from scratch.")
 
     # Enable Gradient Checkpointing for Longformer memory efficiency
     pm.model.gradient_checkpointing_enable()
@@ -207,7 +236,7 @@ def main(load_dir=None, truncation_level=200, others_limit=None, epochs=15):
                 all_labels.append(labels.cpu().numpy())
                 
         avg_val_loss = total_val_loss / len(val_loader)
-        EVAL_THRESHOLD = 0.3
+        EVAL_THRESHOLD = 0.6
         metrics = pm.compute_metrics((np.vstack(all_logits), np.vstack(all_labels)), threshold=EVAL_THRESHOLD)
         
         # Save metrics to run folder

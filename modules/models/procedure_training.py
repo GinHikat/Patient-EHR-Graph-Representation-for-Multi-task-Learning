@@ -112,7 +112,7 @@ def main(load_dir=None, truncation_level=200, others_limit=None, epochs=15):
     num_negatives = len(binary_labels) - num_positives
     # pos_weight = negative / positive. We cap it to avoid extreme gradients.
     raw_weights = num_negatives / (num_positives + 1e-5)
-    class_weights = np.clip(raw_weights, 1.0, 50.0)
+    class_weights = np.clip(raw_weights, 1.0, 20.0)
     print(f"Loss weights (first 5 classes): {class_weights[:5]}")
 
     # Split dataset

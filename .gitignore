@@ -15,3 +15,5 @@ notebooks/*
 *.ipynb
 
 .claude/
+
+modules/models/*

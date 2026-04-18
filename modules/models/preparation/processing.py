@@ -193,9 +193,9 @@ class Extractor:
         df_dis = self.structural_df_discharge(discharge)
         df_rad = self.structural_df_radiology(radiology)
 
-        return df_dis['Major Surgical or Invasive Procedure'], df_rad['Examination'] + ' - ' + df_rad['Indication'] + ' - ' + df_rad['Technique'] + ' - ' + df_rad['Impression']
+        return df_dis['Major Surgical or Invasive Procedure'].iloc[0], (df_rad['Examination'] + ' - ' + df_rad['Indication'] + ' - ' + df_rad['Technique'] + ' - ' + df_rad['Impression']).iloc[0]
 
-    def radiology_input(self, radiology, discharge):
+    def diagnosis_input(self, radiology, discharge):
         """
         Extracts relevant text components for diagnosis identification from radiology and discharge reports for Diagnosis extraction model
 
@@ -210,4 +210,4 @@ class Extractor:
         df_dis = self.structural_df_discharge(discharge)
         df_rad = self.structural_df_radiology(radiology)
 
-        return df_rad['Indication'] + ' - ' + df_rad['Findings'] + ' - ' + df_rad['Impression'], df_dis['History of Present Illness'] + ' - ' + df_dis['Past Medical History'] + ' - ' + df_dis['Brief Hospital Course'] + ' - ' + df_dis['Discharge Diagnosis'] 
+        return (df_rad['Indication'] + ' - ' + df_rad['Findings'] + ' - ' + df_rad['Impression']).iloc[0], (df_dis['History of Present Illness'] + ' - ' + df_dis['Past Medical History'] + ' - ' + df_dis['Brief Hospital Course'] + ' - ' + df_dis['Discharge Diagnosis']).iloc[0] 
