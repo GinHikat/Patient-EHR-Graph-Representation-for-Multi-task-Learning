@@ -15,6 +15,9 @@ data_dir = os.getenv('DATA_DIR')
 
 nlp = spacy.load("en_ner_bc5cdr_md")
 matcher = QuickUMLS(quick_umls_path)
+tui_mapping = pd.read_parquet(os.path.join(data_dir, "UML", "META", 'tui_mapping.parquet'))
+if 'tui' in tui_mapping.columns:
+    tui_mapping = tui_mapping.set_index('tui')
 
 def spacy_quickumls(text):
     
@@ -32,6 +35,22 @@ def spacy_quickumls(text):
     df = pd.DataFrame(flat_data)
     
     # return list(dict.fromkeys(entities)), df_ent
+
+    def get_semantic_type(sem_set):
+        if not isinstance(sem_set, (set, list)):
+            return None
+        # Return the first matching semantic type name
+        for tui in sem_set:
+            if tui in tui_mapping.index:
+                res = tui_mapping.loc[tui, 'sty']
+                return res.iloc[0] if isinstance(res, pd.Series) else res
+        return None
+
+    df['type'] = df['semtypes'].apply(get_semantic_type)
+
+    df = df[['ngram', 'term', 'cui', 'similarity', 'type']]
+    df.columns = ['text', 'term', 'cui', 'similarity', 'type']
+
     return df, df_ent
 
 # Process MRSTY for CUI-TUI mapping
