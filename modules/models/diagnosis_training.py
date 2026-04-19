@@ -105,15 +105,13 @@ def main(load_dir=None, truncation_level=200, others_limit=None, epochs=15):
     class_weights = np.clip(num_negatives / (num_positives + 1e-5), 1.0, 50.0)
     print(f"Loss weights (first 5): {class_weights[:5]}")
 
-
-    # Split dataset
     train_df, temp_df = train_test_split(df, test_size=0.20, random_state=42)
     val_df, test_df = train_test_split(temp_df, test_size=0.50, random_state=42)
 
     # Initialize Model
     print("Initializing Model...")
     torch.cuda.empty_cache()
-    # Reusing ProcedureModel logic as it is a generic multi-label classifier
+
     pm = ProcedureModel(num_labels=num_labels) 
     
     # Save tokenizer and label encoder once at the start
@@ -158,7 +156,7 @@ def main(load_dir=None, truncation_level=200, others_limit=None, epochs=15):
     # Enable Gradient Checkpointing for Longformer memory efficiency
     pm.model.gradient_checkpointing_enable()
     
-    # Dataloaders - Input uses the new 'text' column containing both sources
+    # Dataloaders 
     train_dataset = RadiologyDataset(train_df['text'].tolist(), train_df['labels'].tolist(), pm.tokenizer, max_length=2048)
     val_dataset = RadiologyDataset(val_df['text'].tolist(), val_df['labels'].tolist(), pm.tokenizer, max_length=2048)
     
@@ -177,7 +175,6 @@ def main(load_dir=None, truncation_level=200, others_limit=None, epochs=15):
     loss_fn = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight_tensor)
     
     scaler = torch.cuda.amp.GradScaler()
-
 
     # Training loop
     print("Starting Training...")
@@ -236,28 +233,32 @@ def main(load_dir=None, truncation_level=200, others_limit=None, epochs=15):
                 all_labels.append(labels.cpu().numpy())
                 
         avg_val_loss = total_val_loss / len(val_loader)
-        EVAL_THRESHOLD = 0.6
+
+        EVAL_THRESHOLD = 0.7
+        
         metrics = pm.compute_metrics((np.vstack(all_logits), np.vstack(all_labels)), threshold=EVAL_THRESHOLD)
         
-        # Save metrics to run folder
-        os.makedirs(save_path, exist_ok=True)
-        mode = "w" if epoch == 0 else "a"
-        with open(os.path.join(save_path, "training_metrics.txt"), mode) as f_run:
+        # Log metrics to file inside the run folder
+        log_file_path = os.path.join(save_path, "training_metrics.txt")
+        mode = "a" if (epoch > 0 or load_dir) else "w"
+        with open(log_file_path, mode) as f_run:
             if epoch == 0:
                 f_run.write(f"Starting Training at {pd.Timestamp.now()}\n")
-            f_run.write(f"Epoch {epoch + 1}/{EPOCHS} | Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f}\n")
+                f_run.write(f"Evaluation Threshold: {EVAL_THRESHOLD}\n")
+                f_run.write("="*40 + "\n")
+            
+            f_run.write(f"Epoch {epoch + 1}/{EPOCHS}\n")
+            f_run.write(f"Average Training Loss: {avg_train_loss:.4f}\n")
+            f_run.write(f"Validation Loss: {avg_val_loss:.4f}\n")
             for key, val in metrics.items():
                 f_run.write(f"{key}: {val:.4f}\n")
+                print(f"{key}: {val:.4f}")
             f_run.write("-" * 20 + "\n")
         
         # Save model state dictionary and pretrained weights every epoch
         print(f"Saving checkpoint for Epoch {epoch + 1} to {save_path}...")
         pm.model.save_pretrained(save_path)
         torch.save(pm.model.state_dict(), os.path.join(save_path, "model_state.pt"))
-
-        
-        for key, val in metrics.items():
-            print(f"{key}: {val:.4f}")
 
     print("Training Complete!")
     print(f"Final diagnosis model saved to {save_path}")

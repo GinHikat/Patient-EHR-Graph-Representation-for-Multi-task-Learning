@@ -8,7 +8,7 @@ Link to sheet: https://docs.google.com/spreadsheets/d/1mEZ94OrVd_5svkAkhqHuUEPil
 
 Link to drive: https://drive.google.com/drive/folders/16dRxPz4tVDPScwuYOQ_U5opRdg96qW9W?usp=drive_link
 '''
-import io, sys, os
+import io, sys, os, time
 import gspread
 import pandas as pd
 import json
@@ -27,7 +27,10 @@ import mimetypes
 
 load_dotenv()
 
-google_api_creds = 'secrets/ggsheet_credentials.json'
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
+google_api_creds = os.path.join(PROJECT_ROOT, 'secrets', 'ggsheet_credentials.json')
+
 spreadsheet_id = os.getenv('GOOGLE_SHEET_ID') 
 drive_id = os.getenv('GOOGLE_DRIVE_ID')
 
