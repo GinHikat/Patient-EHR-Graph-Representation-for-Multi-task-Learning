@@ -3,7 +3,7 @@ import sys, os
 import re
 from tqdm import tqdm
 import json
-from collections import defaultdict
+from collections import defaultdict, Counter
 import itertools
 from concurrent.futures import ThreadPoolExecutor
 
@@ -213,7 +213,7 @@ def snapshot_edge(namespace='Test'):
 
     print(f"Edges CSV saved: {output_path}")
 
-def graph_recreation(namespace = 'Test'):
+def graph_recreation(namespace = 'Test', subset = False):
     '''
     Recreate the graph with the Nodes and Edges already backed up
 
@@ -234,6 +234,86 @@ def graph_recreation(namespace = 'Test'):
     nodes_csv = os.path.join(data_dir, 'nodes.csv')
     edges_csv = os.path.join(data_dir, 'edges.csv')
 
+    selected_ids = None
+    if subset:
+        print("Subset mode enabled. Selecting 200k nodes balanced by label...")
+        
+        # Identify connected nodes from edges.csv
+        connected_ids = set()
+        if os.path.exists(edges_csv):
+            est_total_edges = sum(1 for _ in open(edges_csv, encoding='utf-8')) - 1
+            for chunk in tqdm(pd.read_csv(edges_csv, usecols=['source', 'target'], dtype=str, chunksize=100000),
+                              total=(est_total_edges // 100000) + 1, desc="Identifying connected nodes"):
+                connected_ids.update(chunk['source'])
+                connected_ids.update(chunk['target'])
+        
+        # Group all nodes by label and connectivity status
+        label_map = defaultdict(lambda: {'connected': [], 'standalone': []})
+        est_total_nodes = sum(1 for _ in open(nodes_csv, encoding='utf-8')) - 1
+        for chunk in tqdm(pd.read_csv(nodes_csv, usecols=['id', 'labels'], dtype={'id': str}, chunksize=100000),
+                          total=(est_total_nodes // 100000) + 1, desc="Analyzing nodes for subset"):
+            for r in chunk.itertuples(index=False):
+                node_id = str(r.id)
+                labels_str = str(r.labels)
+                labels_list = [l.strip() for l in labels_str.split(':') if l.strip() and l != namespace]
+                primary_label = labels_list[0] if labels_list else 'Unspecified'
+                
+                if node_id in connected_ids:
+                    label_map[primary_label]['connected'].append(node_id)
+                else:
+                    label_map[primary_label]['standalone'].append(node_id)
+        
+        # Selection algorithm (Target 200k)
+        target_total = 200000
+        labels = list(label_map.keys())
+        if labels:
+            base_quota = target_total // len(labels)
+            temp_selected = set()
+            conn_taken_per_label = Counter()
+            stand_taken_per_label = Counter()
+            
+            for label in labels:
+                nodes = label_map[label]['connected']
+                to_take = min(len(nodes), base_quota)
+                temp_selected.update(nodes[:to_take])
+                conn_taken_per_label[label] = to_take
+
+            # Fill remaining quota with standalone nodes
+            for label in labels:
+                needed = base_quota - conn_taken_per_label[label]
+                if needed > 0:
+                    nodes = label_map[label]['standalone']
+                    to_take = min(len(nodes), needed)
+                    temp_selected.update(nodes[:to_take])
+                    stand_taken_per_label[label] = to_take
+
+            # If still under 200k, take remaining nodes (priority: connected)
+            if len(temp_selected) < target_total:
+                remaining_connected = []
+                for label in labels:
+                    remaining_connected.extend(label_map[label]['connected'][conn_taken_per_label[label]:])
+                to_take = min(len(remaining_connected), target_total - len(temp_selected))
+                temp_selected.update(remaining_connected[:to_take])
+                # Note: We don't strictly need to track additional connected taken here 
+                # because we are just filling to the target.
+
+            # Last resort fill with any remaining standalone
+            if len(temp_selected) < target_total:
+                remaining_standalone = []
+                for label in labels:
+                    remaining_standalone.extend(label_map[label]['standalone'][stand_taken_per_label[label]:])
+                
+                to_take = min(len(remaining_standalone), target_total - len(temp_selected))
+                temp_selected.update(remaining_standalone[:to_take])
+            
+            selected_ids = temp_selected
+            print(f"Subset selection complete: {len(selected_ids)} nodes selected.")
+            # Clear label_map to free memory
+            label_map.clear()
+        else:
+            print("No labels found, defaulting to full graph.")
+            subset = False
+
     print("Loading nodes from CSV (chunked)...")
     # Performance: chunksize prevents memory explosion for large CSVs
     node_groups = defaultdict(list)
@@ -244,6 +324,8 @@ def graph_recreation(namespace = 'Test'):
     for chunk in tqdm(pd.read_csv(nodes_csv, low_memory=False, dtype={'id': str}, chunksize=50000), 
                       total=(est_total_nodes // 50000) + 1, desc="Grouping nodes"):
         for r in chunk.itertuples(index=False):
+            if subset and str(r.id) not in selected_ids:
+                continue
             r_dict = r._asdict()
             labels_str = r_dict.pop("labels", "")
             # Filter out NaN/null properties
@@ -307,6 +389,8 @@ def graph_recreation(namespace = 'Test'):
     for chunk in tqdm(pd.read_csv(edges_csv, low_memory=False, dtype={'source': str, 'target': str}, chunksize=50000),
                       total=(est_total_edges // 50000) + 1, desc="Grouping edges"):
         for r in chunk.itertuples(index=False):
+            if subset and (str(r.source) not in selected_ids or str(r.target) not in selected_ids):
+                continue
             r_dict = r._asdict()
             rel_type = r_dict.pop("type")
             source = r_dict.pop("source")
@@ -358,7 +442,7 @@ def clear_database():
 
 if __name__ == '__main__':
 
-    snapshot_node()
-    snapshot_edge()
-    # clear_database()
-    # graph_recreation()
+    # snapshot_node()
+    # snapshot_edge()
+    clear_database()
+    graph_recreation(subset=True)
