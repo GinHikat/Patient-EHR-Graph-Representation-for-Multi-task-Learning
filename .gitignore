@@ -17,3 +17,8 @@ notebooks/*
 .claude/
 
 modules/models/*
+
+.gitnexus
+
+AGENTS.md
+CLAUDE.md

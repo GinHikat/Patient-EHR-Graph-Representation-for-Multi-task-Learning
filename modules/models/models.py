@@ -291,7 +291,8 @@ class NERModel:
             if col not in df.columns:
                 df[col] = None
         
-        return df[['text', 'start', 'end', 'score', 'group']]
+        return df[['text', 'score', 'group']]
 
     def get_models(self) -> Dict[int, str]:
         return ner_model_dict
+
