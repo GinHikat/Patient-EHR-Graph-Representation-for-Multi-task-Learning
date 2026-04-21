@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 from quickumls import QuickUMLS
-import spacy
+import duckdb
 import dotenv
 from tqdm import tqdm
 dotenv.load_dotenv()
@@ -13,9 +13,11 @@ if project_root not in sys.path:
 
 quick_umls_path = os.getenv('QUICKUMLS_PATH')
 data_dir = os.getenv('DATA_DIR')
+base_data_dir = os.path.join(project_root, 'Thesis', 'data')
 
-nlp = spacy.load("en_ner_bc5cdr_md")
-matcher = QuickUMLS(quick_umls_path)
+# nlp = spacy.load("en_ner_bc5cdr_md")
+# Initialize matcher with lower threshold for better recall
+matcher = QuickUMLS(quick_umls_path, window=5)
 tui_mapping = pd.read_parquet(os.path.join(data_dir, "UML", "META", 'tui_mapping.parquet'))
 if 'tui' in tui_mapping.columns:
     tui_mapping = tui_mapping.set_index('tui')
@@ -23,19 +25,23 @@ if 'tui' in tui_mapping.columns:
 def spacy_quickumls(text):
     
     # SciSpacy
-    doc = nlp(text)
-    data = [(ent.text, ent.label_) for ent in doc.ents]
-    entities = [ent.text for ent in doc.ents]
-    df_ent = pd.DataFrame(data, columns=["term", "label"])
+    # doc = nlp(text)
+    # data = [(ent.text, ent.label_) for ent in doc.ents]
+    # df_ent = pd.DataFrame(data, columns=["term", "label"])
     
     # QuickUMLS on FULL TEXT
     results = matcher.match(text)
 
     flat_data = [item for sublist in results for item in sublist]
+    
+    if not flat_data:
+        return pd.DataFrame(columns=['text', 'term', 'cui', 'similarity', 'type'])
 
     df = pd.DataFrame(flat_data)
     
-    # return list(dict.fromkeys(entities)), df_ent
+    # Return empty DF with expected columns if no matches found
+    if df.empty:
+        return pd.DataFrame(columns=['text', 'term', 'cui', 'similarity', 'type'])
 
     def get_semantic_type(sem_set):
         if not isinstance(sem_set, (set, list)):
@@ -47,14 +53,24 @@ def spacy_quickumls(text):
                 return res.iloc[0] if isinstance(res, pd.Series) else res
         return None
 
-    df['type'] = df['semtypes'].apply(get_semantic_type)
+    # Gracefully handle cases where 'semtypes' might be missing
+    if 'semtypes' in df.columns:
+        df['type'] = df['semtypes'].apply(get_semantic_type)
+    else:
+        df['type'] = None
+
+    # Ensure all expected columns exist before sub-selecting
+    for col in ['ngram', 'term', 'cui', 'similarity', 'type']:
+        if col not in df.columns:
+            df[col] = None
 
     df = df[['ngram', 'term', 'cui', 'similarity', 'type']]
     df.columns = ['text', 'term', 'cui', 'similarity', 'type']
 
-    return df, df_ent
+    return df
 
 # Process MRSTY for CUI-TUI mapping
+def cui_tui_mapping():
     mrsty_path = os.path.join(data_dir, "UML", "META", "MRSTY.RRF")
 
     df_sty = pd.read_csv(
@@ -68,71 +84,45 @@ def spacy_quickumls(text):
     df_sty = df_sty[['cui', 'tui', 'sty']]
 
 ## Use QuickUML to map between DrugBank Indication to Diagnosis (drug_df is the drugbank dataset)
-    output_file = 'drug_diag_results.csv'
-    diagnosis_types = ['Disease or Syndrome', 'Injury or Poisoning', 'Finding']
+def indication_to_diagnosis_uml():
 
-    if os.path.exists(output_file):
-        try:
-            # Optimization: Only read the one column we need to save RAM
-            existing_data = pd.read_csv(output_file, usecols=['original_index'])
-            # Ensure indices are integers (or strings) for consistent matching
-            processed_indices = set(existing_data['original_index'].dropna().astype(drug_df.index.dtype))
-            print(f"Checkpoint found: Resuming from {len(processed_indices)} processed rows.")
-        except Exception as e:
-            print(f"Error loading checkpoint: {e}. Starting fresh.")
-            processed_indices = set()
-    else:
-        processed_indices = set()
-        print("No checkpoint found: Starting fresh...")
+    checkpoint = pd.read_csv(os.path.join(base_data_dir, 'checkpoint.csv'), quoting = 1, on_bad_lines='skip')
+    done = checkpoint['id'].values
+    print(f'{len(done)} done')
 
-    for i in tqdm(range(len(drug_df)), desc="Refining Diagnoses"):
-        original_idx = drug_df.index[i]
-        
-        if original_idx in processed_indices:
+    diagnosis_types = [
+        'Disease or Syndrome', 
+        'Injury or Poisoning', 
+        'Finding', 
+        'Sign or Symptom',
+        'Neoplastic Process',            # Cancers/Tumors
+        'Mental or Behavioral Dysfunction', # Psychiatric conditions
+        'Pathologic Function',           # Disease mechanisms
+        'Congenital Abnormality',        # Genetic/birth defects
+        'Anatomical Abnormality'         # Structural disease phenotypes
+    ]
+
+    noise_words = ['indicated', 'major', 'various', 'today']
+
+    for i in tqdm(drug_df.index, desc='Extracting diagnosis from Indication:'):
+
+        if drug_df.loc[i, 'id'] in done:
             continue
-            
-        row = drug_df.iloc[i].copy()
-        text = str(row['indication']) if pd.notnull(row['indication']) else ""
-        
-        try:
-            df_results, _ = spacy_quickumls(text)
-            
-            if not df_results.empty:
-                # Filter by your selected types
-                mask = df_results['type'].isin(diagnosis_types)
-                df_diag = df_results[mask].copy()
-                
-                # FIX: Sort similarity DESCENDING (False) so we keep the best matches
-                df_diag = df_diag.sort_values(['term', 'similarity'], ascending=[True, False])
-                
-                # Remove very generic 'Findings' that aren't real diagnoses
-                noise_words = ['indicated', 'major', 'various', 'today']
-                df_diag = df_diag[~df_diag['term'].str.lower().isin(noise_words)]
-                
-                df_diag = df_diag.drop_duplicates('term', keep='first')
-                
-                # Use CUI as requested
-                row['related_diagnosis'] = '|'.join(df_diag['cui'].values)
-            else:
-                row['related_diagnosis'] = ''
-                
-        except Exception as e:
-            # Use tqdm.write so it doesn't break the progress bar
-            tqdm.write(f"Error at index {original_idx}: {e}")
-            row['related_diagnosis'] = 'ERROR'
+        else: 
+            text = drug_df.loc[i, 'indication']
 
-        row_to_save = pd.DataFrame([row])
-        row_to_save['original_index'] = original_idx 
-        
-        # Mode 'a' for append, header only written if file is new
-        row_to_save.to_csv(
-            output_file, 
-            mode='a', 
-            index=False, 
-            sep='\t', 
-            quoting=csv.QUOTE_ALL, 
-            header=not os.path.exists(output_file)
-        )
+            df_diag = spacy_quickumls(text)
+            df_diag = df_diag[~df_diag['term'].str.lower().isin(noise_words)]
+            df_diag = df_diag[df_diag['type'].isin(diagnosis_types)]
+            df_diag = df_diag.sort_values(['term', 'similarity'])
+            df_diag = df_diag.drop_duplicates('term', keep='first')
 
-    print(f"Processing complete! Results saved to {output_file}")
+            drug_df.loc[i, 'related_diagnosis'] = ', '.join(df_diag['cui'])
 
+            # Append completed row to checkpoint
+            checkpoint_path = os.path.join(base_data_dir, 'checkpoint.csv')
+            write_header = not os.path.exists(checkpoint_path)
+            drug_df.loc[[i]].to_csv(checkpoint_path, mode='a', header=write_header, index=True)
+
+# if __name__ == '__main__':
+#     indication_to_diagnosis_uml()
