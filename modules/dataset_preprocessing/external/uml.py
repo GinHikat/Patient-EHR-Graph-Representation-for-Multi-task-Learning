@@ -15,6 +15,48 @@ quick_umls_path = os.getenv('QUICKUMLS_PATH')
 data_dir = os.getenv('DATA_DIR')
 base_data_dir = os.path.join(project_root, 'Thesis', 'data')
 
+# Initial load from MRCONSO.RRF
+columns = [
+    "CUI", "LAT", "TS", "LUI", "STT", "SUI", "ISPREF",
+    "AUI", "SAUI", "SCUI", "SDUI", "SAB", "TTY",
+    "CODE", "STR", "SRL", "SUPPRESS", "CVF"
+]
+
+# Load MRCONSO.RRF
+uml = pd.read_csv(
+    os.path.join(data_dir, 'UML', "MRCONSO.RRF"),
+    sep="|",
+    header=None,
+    names=columns,
+    dtype=str,        # IMPORTANT: keep everything as string
+    index_col=False,
+    quoting=3         # avoid issues with quotes
+)
+
+# Drop the last empty column if it exists (common in RRF files)
+if uml.columns[-1] == 'CVF' and uml['CVF'].isna().all():
+    pass  
+# Sometimes there's an extra unnamed column due to trailing "|"
+if uml.shape[1] > len(columns):
+    uml = uml.iloc[:, :len(columns)]
+
+uml = uml[uml['LAT'] == 'ENG']
+uml = uml[['CUI', 'SAB', 'CODE', 'STR']]
+
+list_sab = ['MSH', 'RXNORM', 'SNOMEDCT_US', 'ATC', 'DRUGBANK', 'OMIM', 'ICD10', 'ICD10CM', 'HPO', 'ICD9CM', 'CCSR_ICD10PCS', 'ICD10AE', 'CCSR_ICD10CM', 'ICD10AMAE', 'ICD10PCS']
+
+uml = uml[uml['SAB'].isin(list_sab)].dropna(subset = 'CODE')
+uml['STR'] = uml['STR'].str.title()
+
+diag_mappings = {
+    'ICD10CM': 'ICD10',
+    'ICD10AE': 'ICD10',
+    'ICD10AMAE': 'ICD10'
+}
+uml['SAB'] = uml['SAB'].replace(diag_mappings)
+
+# Start working with Index
+
 # nlp = spacy.load("en_ner_bc5cdr_md")
 # Initialize matcher with lower threshold for better recall
 matcher = QuickUMLS(quick_umls_path, window=5)
