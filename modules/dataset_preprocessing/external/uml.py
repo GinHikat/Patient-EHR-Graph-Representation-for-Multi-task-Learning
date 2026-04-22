@@ -166,5 +166,73 @@ def indication_to_diagnosis_uml():
             write_header = not os.path.exists(checkpoint_path)
             drug_df.loc[[i]].to_csv(checkpoint_path, mode='a', header=write_header, index=True)
 
-# if __name__ == '__main__':
-#     indication_to_diagnosis_uml()
+### Map CUI to related IDs from other database
+def map_cui_db():
+    target_sabs = [
+        'OMIM', 'HPO', 'ICD9CM',
+        'ICD10', 'CCSR_ICD10CM', 'MSH', 'ATC'
+    ]
+
+    uml_filtered = uml[uml['SAB'].isin(target_sabs)]
+
+    cui_map = (
+        uml_filtered
+        .groupby('CUI')[['SAB', 'CODE']]
+        .apply(lambda x: list(set(list(zip(x['SAB'], x['CODE'])))))
+        .to_dict()
+    )
+
+    # Parse to column-wise format
+    records = []
+    for cui, mappings in cui_map.items():
+        for sab, code in mappings:
+            records.append({'CUI': cui, 'SAB': sab, 'CODE': code})
+
+    df_map = pd.DataFrame(records)
+
+    # Pivot to create the columns
+    cui_df = df_map.pivot_table(
+        index='CUI', 
+        columns='SAB', 
+        values='CODE', 
+        aggfunc=lambda x: ', '.join(x)
+    )
+
+    cui_df = cui_df.reset_index().rename_axis(None, axis=1)
+
+    ## Start Connecting between 2 dataframes
+    target_cols = [
+        'ATC', 'CCSR_ICD10CM', 'HPO', 'ICD10',
+        'ICD9CM', 'MSH', 'OMIM'
+    ]
+
+    # Split related_diagnosis into list of CUIs
+    extract['related_diagnosis'] = extract['related_diagnosis'].fillna('')
+    extract['CUI_list'] = extract['related_diagnosis'].apply(
+        lambda x: [c.strip() for c in x.split(',')] if x else []
+    )
+
+    # Explode to long format
+    df_long = extract[['id', 'CUI_list']].explode('CUI_list')
+    df_long = df_long.rename(columns={'CUI_list': 'CUI'})
+
+    # Merge with map on CUI
+    df_merged = df_long.merge(
+        map[['CUI'] + target_cols],
+        on='CUI',
+        how='left'
+    )
+
+    # Aggregate back (collect unique values into lists)
+    def agg_list(series):
+        return list(set(series.dropna()))
+
+    df_grouped = df_merged.groupby('id')[target_cols].agg(agg_list).reset_index()
+
+    # Merge back into original extract
+    extract = extract.merge(df_grouped, on='id', how='left')
+
+    extract = extract.drop('related_diagnosis', axis = 1)
+
+    extract['HPO'] = extract['HPO'].apply(lambda x: [i.replace('HP:', '') for i in x])
+
