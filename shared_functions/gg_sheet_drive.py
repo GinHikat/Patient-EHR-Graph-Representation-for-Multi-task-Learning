@@ -8,7 +8,7 @@ Link to sheet: https://docs.google.com/spreadsheets/d/1mEZ94OrVd_5svkAkhqHuUEPil
 
 Link to drive: https://drive.google.com/drive/folders/16dRxPz4tVDPScwuYOQ_U5opRdg96qW9W?usp=drive_link
 '''
-import io, sys, os, time
+import io, os, time
 import gspread
 import pandas as pd
 import json
