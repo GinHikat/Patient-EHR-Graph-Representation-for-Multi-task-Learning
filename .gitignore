@@ -16,7 +16,7 @@ notebooks/*
 
 .claude/
 
-modules/models/*
+modules/models/.models/*
 
 .gitnexus
 

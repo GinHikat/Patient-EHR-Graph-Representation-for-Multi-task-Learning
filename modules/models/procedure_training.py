@@ -29,9 +29,9 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # Define paths relative to the script's location
 script_dir = os.path.dirname(os.path.abspath(__file__))
 temp_root = os.path.dirname(script_dir)
-from modules.models import ProcedureModel, RadiologyDataset
+from models import ProcedureModel, RadiologyDataset
 
-data_dir = os.path.join(temp_root, 'data', 'Note')
+data_dir = os.path.join(temp_root, 'data')
 cleaned_data_dir = os.path.join(data_dir, 'cleaned')
 
 def main(load_dir=None, truncation_level=200, others_limit=None, epochs=15):
@@ -49,7 +49,7 @@ def main(load_dir=None, truncation_level=200, others_limit=None, epochs=15):
 
     # Load dataset
     print("Loading dataset...")
-    csv_path = os.path.join(cleaned_data_dir, 'procedure_final.csv') 
+    csv_path = os.path.join(data_dir, 'procedure_final.csv') 
     df = pd.read_csv(csv_path)
     df['category'] = df['category'].apply(ast.literal_eval)
 
