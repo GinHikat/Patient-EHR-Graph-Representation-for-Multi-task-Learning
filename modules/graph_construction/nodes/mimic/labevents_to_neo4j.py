@@ -5,6 +5,7 @@ from tqdm import tqdm
 import os
 import sys
 import time
+import json
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.abspath(os.path.join(current_dir, ".."))
@@ -36,6 +37,7 @@ def import_labs_to_neo4j():
         print(f"Index creation note: {e}")
 
     df = pd.read_csv(aggregated_csv)
+    df['stats_json'] = df['stats_json'].apply(lambda x: json.loads(x) if isinstance(x, str) else {})
 
     # Import to Neo4j
     cypher_lab = """

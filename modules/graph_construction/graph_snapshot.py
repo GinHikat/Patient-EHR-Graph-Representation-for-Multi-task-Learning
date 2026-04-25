@@ -70,13 +70,10 @@ def snapshot_node(namespace='Test'):
         return
 
     # Efficiently collect all possible property keys using Cypher
-    print("Identifying property keys (scanning distinct key sets)...")
-    keys_query = f"MATCH (n:{namespace}) RETURN DISTINCT keys(n) AS key_set"
+    print("Identifying property keys (scanning individual keys)...")
+    keys_query = f"MATCH (n:{namespace}) UNWIND keys(n) AS key RETURN DISTINCT key"
     res = query_neo4j(keys_query)
-    all_keys = set()
-    for row in res:
-        all_keys.update(row["key_set"])
-    all_keys = sorted(list(all_keys))
+    all_keys = sorted([row["key"] for row in res])
     columns = ["id", "labels"] + all_keys
 
     # Fetch nodes in a stream
@@ -152,13 +149,10 @@ def snapshot_edge(namespace='Test'):
         return
 
     # Efficiently collect all relationship property keys using Cypher
-    print("Identifying edge property keys (scanning distinct key sets)...")
-    keys_query = f"MATCH (a:{namespace})-[r]->(b:{namespace}) RETURN DISTINCT keys(r) AS key_set"
+    print("Identifying edge property keys (scanning individual keys)...")
+    keys_query = f"MATCH (a:{namespace})-[r]->(b:{namespace}) UNWIND keys(r) AS key RETURN DISTINCT key"
     res = query_neo4j(keys_query)
-    all_edge_keys = set()
-    for row in res:
-        all_edge_keys.update(row["key_set"])
-    all_edge_keys = sorted(list(all_edge_keys))
+    all_edge_keys = sorted([row["key"] for row in res])
     columns = ["source", "target", "type"] + all_edge_keys
 
     # Fetch edges
@@ -442,7 +436,7 @@ def clear_database():
 
 if __name__ == '__main__':
 
-    # snapshot_node()
-    # snapshot_edge()
-    clear_database()
-    graph_recreation(subset=True)
+    snapshot_node()
+    snapshot_edge()
+    # clear_database()
+    # graph_recreation(subset=True)
