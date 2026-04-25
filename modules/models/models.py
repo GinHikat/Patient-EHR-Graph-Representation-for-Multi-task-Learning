@@ -9,10 +9,10 @@ from transformers import pipeline
 import pandas as pd
 
 model_dict = {
-    1: 'BAAI/bge-large-en-v1.5', # 768
     2: 'pritamdeka/S-PubMedBert-MS-MARCO', # 768
     3: 'ncbi/MedCPT-Query-Encoder', # 768
-    4: 'NeuML/pubmedbert-base-embeddings' # 768
+    4: 'NeuML/pubmedbert-base-embeddings', # 768
+    1: 'cambridgeltl/SapBERT-from-PubMedBERT-fulltext'
 }
 
 ner_model_dict = {
