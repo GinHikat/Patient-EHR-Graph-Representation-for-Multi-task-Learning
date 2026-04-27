@@ -10,9 +10,12 @@ if project_root not in sys.path:
 
 from shared_functions.global_functions import *
 from modules.dataset_preprocessing.utils import *
+from modules.models.models import EmbeddingModels
 
 from dotenv import load_dotenv
 load_dotenv() 
+
+embedder = EmbeddingModels(1)
 
 prescription = read_full('hosp', 'prescription_clean')
 
@@ -50,4 +53,10 @@ prescription = prescription[prescription['dose_unit_normalized'].isin(valid_unit
 
 prescription = prescription.drop(['dose_unit', 'ndc'], axis = 1)
 prescription = prescription.rename(columns = {'dose_unit_normalized':'unit'})
+
+# Batch Embedding drug name for DrugBank matching
+list_drug = prescription[['drug']].drop_duplicates()
+list_drug['drug_embedding'] = list_drug['drug'].apply(lambda x: embedder.encode_text(x))
+
+prescription = prescription.merge(list_drug, on = 'drug', how = 'left')
 

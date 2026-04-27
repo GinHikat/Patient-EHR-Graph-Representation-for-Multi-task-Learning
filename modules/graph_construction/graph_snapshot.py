@@ -6,6 +6,8 @@ import json
 from collections import defaultdict, Counter
 import itertools
 from concurrent.futures import ThreadPoolExecutor
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if project_root not in sys.path:
@@ -17,7 +19,7 @@ from shared_functions.global_functions import query_neo4j, driver, DATABASE, dml
 data_dir = os.path.join(project_root, 'data')
 
 def process_node_batch(batch, all_keys):
-    """Normalize a batch of node records."""
+    """Normalize a batch of node records and stringify complex types."""
     rows = []
     for record in batch:
         row = {
@@ -26,12 +28,16 @@ def process_node_batch(batch, all_keys):
         }
         props = record["props"]
         for key in all_keys:
-            row[key] = props.get(key, None)
+            val = props.get(key, None)
+            # Stringify lists/dicts to avoid Parquet schema errors
+            if isinstance(val, (list, dict)):
+                val = json.dumps(val)
+            row[key] = val
         rows.append(row)
     return rows
 
 def process_edge_batch(batch, all_edge_keys):
-    """Normalize a batch of edge records."""
+    """Normalize a batch of edge records and stringify complex types."""
     edge_rows = []
     for record in batch:
         row = {
@@ -41,7 +47,11 @@ def process_edge_batch(batch, all_edge_keys):
         }
         props = record["props"]
         for key in all_edge_keys:
-            row[key] = props.get(key, None)
+            val = props.get(key, None)
+            # Stringify lists/dicts to avoid Parquet schema errors
+            if isinstance(val, (list, dict)):
+                val = json.dumps(val)
+            row[key] = val
         edge_rows.append(row)
     return edge_rows
 
@@ -73,56 +83,81 @@ def snapshot_node(namespace='Test'):
     print("Identifying property keys (scanning individual keys)...")
     keys_query = f"MATCH (n:{namespace}) UNWIND keys(n) AS key RETURN DISTINCT key"
     res = query_neo4j(keys_query)
-    all_keys = sorted([row["key"] for row in res])
+    
+    # FILTER OUT base columns to avoid "Duplicate Column" error in Parquet
+    all_keys = sorted([row["key"] for row in res if row["key"] not in ["id", "labels"]])
     columns = ["id", "labels"] + all_keys
 
-    # Fetch nodes in a stream
+    # CHECKPOINT: Find existing rows to resume
+    skip_count = 0
+    existing_parts = [f for f in os.listdir(data_dir) if f.startswith("nodes_part_") and f.endswith(".parquet")]
+    for part in existing_parts:
+        try:
+            meta = pq.read_metadata(os.path.join(data_dir, part))
+            skip_count += meta.num_rows
+        except:
+            pass
+    
+    if skip_count > 0:
+        print(f"Resuming snapshot: {skip_count} nodes found in {len(existing_parts)} part files.")
+
+    # Create a NEW part file for this run
+    next_part = len(existing_parts) + 1
+    output_path = os.path.join(data_dir, f"nodes_part_{next_part}.parquet")
+
+    # Fetch nodes in a stream (ORDER BY id is required for SKIP)
     query_nodes = f"""
     MATCH (n:{namespace})
     RETURN n.id AS id, labels(n) AS labels, properties(n) AS props
+    ORDER BY n.id
+    SKIP $skip
     """
-    
-    output_path = os.path.join(data_dir, "nodes.csv")
     batch_size = 10000
     num_workers = 4
-
-    # Initialize CSV with header
-    pd.DataFrame(columns=columns).to_csv(output_path, index=False)
+    writer = None
 
     with driver.session(database=DATABASE) as session:
-        result = session.run(query_nodes)
+        result = session.run(query_nodes, skip=skip_count)
         
-        with tqdm(total=total, desc=f"Snapshotting {namespace} Nodes") as pbar:
+        with tqdm(total=total, initial=skip_count, desc=f"Snapshotting {namespace} Nodes") as pbar:
             with ThreadPoolExecutor(max_workers=num_workers) as executor:
                 futures = []
                 while True:
-                    # Pull batch from Neo4j
                     batch_data = []
                     for _ in range(batch_size):
                         try:
                             record = next(result)
                             batch_data.append(record.data())
-                            pbar.update(1)
                         except StopIteration:
                             break
                     
                     if not batch_data:
                         break
                     
-                    # Process and write
                     futures.append(executor.submit(process_node_batch, batch_data, all_keys))
                     
-                    # Flush oldest completed future to disk
-                    if len(futures) >= num_workers * 2:
+                    if len(futures) >= num_workers:
                         res_rows = futures.pop(0).result()
-                        pd.DataFrame(res_rows, columns=columns).to_csv(output_path, mode='a', header=False, index=False)
+                        df_batch = pd.DataFrame(res_rows, columns=columns)
+                        table = pa.Table.from_pandas(df_batch)
+                        if writer is None:
+                            writer = pq.ParquetWriter(output_path, table.schema, compression='snappy')
+                        writer.write_table(table)
+                        pbar.update(len(res_rows))
                 
-                # Write remaining batches
                 for f in futures:
                     res_rows = f.result()
-                    pd.DataFrame(res_rows, columns=columns).to_csv(output_path, mode='a', header=False, index=False)
+                    df_batch = pd.DataFrame(res_rows, columns=columns)
+                    table = pa.Table.from_pandas(df_batch)
+                    if writer is None:
+                        writer = pq.ParquetWriter(output_path, table.schema, compression='snappy')
+                    writer.write_table(table)
+                    pbar.update(len(res_rows))
 
-    print(f"Nodes CSV saved: {output_path}")
+    if writer:
+        writer.close()
+
+    print(f"Nodes Parquet saved: {output_path}")
 
 def snapshot_edge(namespace='Test'):
     '''
@@ -152,8 +187,25 @@ def snapshot_edge(namespace='Test'):
     print("Identifying edge property keys (scanning individual keys)...")
     keys_query = f"MATCH (a:{namespace})-[r]->(b:{namespace}) UNWIND keys(r) AS key RETURN DISTINCT key"
     res = query_neo4j(keys_query)
-    all_edge_keys = sorted([row["key"] for row in res])
+    all_edge_keys = sorted([row["key"] for row in res if row["key"] not in ["source", "target", "type"]])
     columns = ["source", "target", "type"] + all_edge_keys
+
+    # CHECKPOINT: Find existing rows to resume
+    skip_count = 0
+    existing_parts = [f for f in os.listdir(data_dir) if f.startswith("edges_part_") and f.endswith(".parquet")]
+    for part in existing_parts:
+        try:
+            meta = pq.read_metadata(os.path.join(data_dir, part))
+            skip_count += meta.num_rows
+        except:
+            pass
+    
+    if skip_count > 0:
+        print(f"Resuming snapshot: {skip_count} edges found in {len(existing_parts)} part files.")
+
+    # Create a NEW part file for this run
+    next_part = len(existing_parts) + 1
+    output_path = os.path.join(data_dir, f"edges_part_{next_part}.parquet")
 
     # Fetch edges
     query_edges = f"""
@@ -163,49 +215,55 @@ def snapshot_edge(namespace='Test'):
         coalesce(b.id, elementId(b)) AS target,
         type(r) AS type,
         properties(r) AS props
+    ORDER BY source, target
+    SKIP $skip
     """
-    
-    output_path = os.path.join(data_dir, "edges.csv")
     batch_size = 10000
     num_workers = 4
-
-    # Initialize CSV with header
-    pd.DataFrame(columns=columns).to_csv(output_path, index=False)
+    writer = None
 
     with driver.session(database=DATABASE) as session:
-        result = session.run(query_edges)
+        result = session.run(query_edges, skip=skip_count)
         
-        with tqdm(total=total, desc=f"Snapshotting {namespace} Edges") as pbar:
+        with tqdm(total=total, initial=skip_count, desc=f"Snapshotting {namespace} Edges") as pbar:
             with ThreadPoolExecutor(max_workers=num_workers) as executor:
                 futures = []
                 while True:
-                    # Pull batch from Neo4j
                     batch_data = []
                     for _ in range(batch_size):
                         try:
                             record = next(result)
                             batch_data.append(record.data())
-                            pbar.update(1)
                         except StopIteration:
                             break
                     
                     if not batch_data:
                         break
                     
-                    # Process and write
                     futures.append(executor.submit(process_edge_batch, batch_data, all_edge_keys))
                     
-                    # Flush oldest completed future to disk
-                    if len(futures) >= num_workers * 2:
+                    if len(futures) >= num_workers:
                         res_rows = futures.pop(0).result()
-                        pd.DataFrame(res_rows, columns=columns).to_csv(output_path, mode='a', header=False, index=False)
+                        df_batch = pd.DataFrame(res_rows, columns=columns)
+                        table = pa.Table.from_pandas(df_batch)
+                        if writer is None:
+                            writer = pq.ParquetWriter(output_path, table.schema, compression='snappy')
+                        writer.write_table(table)
+                        pbar.update(len(res_rows))
                 
-                # Write remaining batches
                 for f in futures:
                     res_rows = f.result()
-                    pd.DataFrame(res_rows, columns=columns).to_csv(output_path, mode='a', header=False, index=False)
+                    df_batch = pd.DataFrame(res_rows, columns=columns)
+                    table = pa.Table.from_pandas(df_batch)
+                    if writer is None:
+                        writer = pq.ParquetWriter(output_path, table.schema, compression='snappy')
+                    writer.write_table(table)
+                    pbar.update(len(res_rows))
 
-    print(f"Edges CSV saved: {output_path}")
+    if writer:
+        writer.close()
+
+    print(f"Edges Parquet saved: {output_path}")
 
 def graph_recreation(namespace = 'Test', subset = False):
     '''
@@ -225,29 +283,41 @@ def graph_recreation(namespace = 'Test', subset = False):
     except Exception as e:
         print(f"Note on constraints: {e}")
 
-    nodes_csv = os.path.join(data_dir, 'nodes.csv')
-    edges_csv = os.path.join(data_dir, 'edges.csv')
+    nodes_pattern = os.path.join(data_dir, 'nodes_part_*.parquet')
+    edges_pattern = os.path.join(data_dir, 'edges_part_*.parquet')
 
     selected_ids = None
     if subset:
         print("Subset mode enabled. Selecting 200k nodes balanced by label...")
         
-        # Identify connected nodes from edges.csv
+        # Identify connected nodes from edges parts
         connected_ids = set()
-        if os.path.exists(edges_csv):
-            est_total_edges = sum(1 for _ in open(edges_csv, encoding='utf-8')) - 1
-            for chunk in tqdm(pd.read_csv(edges_csv, usecols=['source', 'target'], dtype=str, chunksize=100000),
-                              total=(est_total_edges // 100000) + 1, desc="Identifying connected nodes"):
-                connected_ids.update(chunk['source'])
-                connected_ids.update(chunk['target'])
+        import glob
+        edge_files = glob.glob(edges_pattern)
+        if edge_files:
+            for ef in edge_files:
+                meta = pq.read_metadata(ef)
+                est_total_edges = meta.num_rows
+                parquet_file = pq.ParquetFile(ef)
+                for batch in tqdm(parquet_file.iter_batches(batch_size=100000, columns=['source', 'target']), 
+                                   total=(est_total_edges // 100000) + 1, desc=f"Analyzing {os.path.basename(ef)}"):
+                    chunk = batch.to_pandas()
+                    connected_ids.update(chunk['source'])
+                    connected_ids.update(chunk['target'])
         
         # Group all nodes by label and connectivity status
         label_map = defaultdict(lambda: {'connected': [], 'standalone': []})
-        est_total_nodes = sum(1 for _ in open(nodes_csv, encoding='utf-8')) - 1
-        for chunk in tqdm(pd.read_csv(nodes_csv, usecols=['id', 'labels'], dtype={'id': str}, chunksize=100000),
-                          total=(est_total_nodes // 100000) + 1, desc="Analyzing nodes for subset"):
-            for r in chunk.itertuples(index=False):
-                node_id = str(r.id)
+        import glob
+        node_files = glob.glob(nodes_pattern)
+        for nf in node_files:
+            meta_n = pq.read_metadata(nf)
+            est_total_nodes_p = meta_n.num_rows
+            parquet_file_n = pq.ParquetFile(nf)
+            for batch in tqdm(parquet_file_n.iter_batches(batch_size=100000, columns=['id', 'labels']), 
+                              total=(est_total_nodes_p // 100000) + 1, desc=f"Analyzing {os.path.basename(nf)}"):
+                chunk = batch.to_pandas()
+                for r in chunk.itertuples(index=False):
+                    node_id = str(r.id)
                 labels_str = str(r.labels)
                 labels_list = [l.strip() for l in labels_str.split(':') if l.strip() and l != namespace]
                 primary_label = labels_list[0] if labels_list else 'Unspecified'
@@ -308,18 +378,20 @@ def graph_recreation(namespace = 'Test', subset = False):
             print("No labels found, defaulting to full graph.")
             subset = False
 
-    print("Loading nodes from CSV (chunked)...")
-    # Performance: chunksize prevents memory explosion for large CSVs
+    print("Loading nodes from Parquet parts (chunked)...")
     node_groups = defaultdict(list)
-    
-    # Estimate total nodes for progress bar (faster than counting lines)
-    est_total_nodes = total_nodes = sum(1 for _ in open(nodes_csv, encoding='utf-8')) - 1
-    
-    for chunk in tqdm(pd.read_csv(nodes_csv, low_memory=False, dtype={'id': str}, chunksize=50000), 
-                      total=(est_total_nodes // 50000) + 1, desc="Grouping nodes"):
-        for r in chunk.itertuples(index=False):
-            if subset and str(r.id) not in selected_ids:
-                continue
+    import glob
+    node_files = glob.glob(nodes_pattern)
+    for nf in node_files:
+        meta_n = pq.read_metadata(nf)
+        est_total_nodes_p = meta_n.num_rows
+        parquet_file_n = pq.ParquetFile(nf)
+        for batch in tqdm(parquet_file_n.iter_batches(batch_size=50000), 
+                          total=(est_total_nodes_p // 50000) + 1, desc=f"Grouping {os.path.basename(nf)}"):
+            chunk = batch.to_pandas()
+            for r in chunk.itertuples(index=False):
+                if subset and str(r.id) not in selected_ids:
+                    continue
             r_dict = r._asdict()
             labels_str = r_dict.pop("labels", "")
             # Filter out NaN/null properties
@@ -374,17 +446,20 @@ def graph_recreation(namespace = 'Test', subset = False):
     print(f"Final physical node count for '{namespace}': {query_neo4j(f'MATCH (n:{namespace}) RETURN count(n) as t')[0]['t']}")
 
     # Granular Edge Resume
-    print("Loading edges from CSV (chunked)...")
+    print("Loading edges from Parquet parts (chunked)...")
     edge_groups = defaultdict(list)
-    
-    # Estimate total edges
-    est_total_edges = sum(1 for _ in open(edges_csv, encoding='utf-8')) - 1
-    
-    for chunk in tqdm(pd.read_csv(edges_csv, low_memory=False, dtype={'source': str, 'target': str}, chunksize=50000),
-                      total=(est_total_edges // 50000) + 1, desc="Grouping edges"):
-        for r in chunk.itertuples(index=False):
-            if subset and (str(r.source) not in selected_ids or str(r.target) not in selected_ids):
-                continue
+    import glob
+    edge_files = glob.glob(edges_pattern)
+    for ef in edge_files:
+        meta_e = pq.read_metadata(ef)
+        est_total_edges_p = meta_e.num_rows
+        parquet_file_e = pq.ParquetFile(ef)
+        for batch in tqdm(parquet_file_e.iter_batches(batch_size=50000),
+                          total=(est_total_edges_p // 50000) + 1, desc=f"Grouping {os.path.basename(ef)}"):
+            chunk = batch.to_pandas()
+            for r in chunk.itertuples(index=False):
+                if subset and (str(r.source) not in selected_ids or str(r.target) not in selected_ids):
+                    continue
             r_dict = r._asdict()
             rel_type = r_dict.pop("type")
             source = r_dict.pop("source")

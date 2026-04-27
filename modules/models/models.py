@@ -4,15 +4,16 @@ import numpy as np
 from transformers import AutoTokenizer, AutoModel, BertTokenizer, BertModel, AutoModelForSequenceClassification
 from typing import List, Union, Optional, Dict
 from torch.utils.data import Dataset
-from sklearn.metrics import f1_score, accuracy_score, precision_score, recall_score
+from sklearn.metrics import f1_score, accuracy_score, precision_score, recall_score, roc_auc_score, average_precision_score
 from transformers import pipeline
 import pandas as pd
+from tqdm import tqdm
 
 model_dict = {
+    1: 'cambridgeltl/SapBERT-from-PubMedBERT-fulltext',
     2: 'pritamdeka/S-PubMedBert-MS-MARCO', # 768
     3: 'ncbi/MedCPT-Query-Encoder', # 768
-    4: 'NeuML/pubmedbert-base-embeddings', # 768
-    1: 'cambridgeltl/SapBERT-from-PubMedBERT-fulltext'
+    4: 'NeuML/pubmedbert-base-embeddings' # 768
 }
 
 ner_model_dict = {
@@ -70,13 +71,15 @@ class EmbeddingModels:
                             return line.split('=')[1].strip().strip('"').strip("'")
         return os.getenv("HUGGINGFACE_API_KEY")
 
-    def encode_text(self, texts: Union[str, List[str]], batch_size: int = 32) -> np.ndarray:
+    def encode_text(self, texts: Union[str, List[str]], batch_size: int = 64, show_progress: bool = True) -> np.ndarray:
         if isinstance(texts, str): texts = [texts]
         if not texts: return np.array([])
         
         all_embeddings = []
         
-        for i in range(0, len(texts), batch_size):
+        
+        pbar = tqdm(range(0, len(texts), batch_size), desc='Encoding text', disable=not show_progress)
+        for i in pbar:
             batch_texts = texts[i : i + batch_size]
             # Determine safe max length (default to 512 for most medical BERTs)
             tokenizer_max = self.tokenizer.model_max_length
@@ -162,8 +165,16 @@ class ProcedureModel:
             'recall_macro': recall_score(labels, predictions, average='macro', zero_division=0),
             'max_p': np.max(probs),
             'avg_truth_p': np.mean(probs[labels == 1]) if np.any(labels == 1) else 0.0,
-            'accuracy': accuracy_score(labels, predictions)
+            'accuracy': accuracy_score(labels, predictions),
+            'mAP': average_precision_score(labels, probs, average='macro')
         }
+
+        try:
+            metrics['roc_auc_macro'] = roc_auc_score(labels, probs, average='macro')
+            metrics['roc_auc_micro'] = roc_auc_score(labels, probs, average='micro')
+        except ValueError:
+            metrics['roc_auc_macro'] = 0.0
+            metrics['roc_auc_micro'] = 0.0
         
         # Searching for the best global threshold (using F1 Micro)
         best_f1 = 0
