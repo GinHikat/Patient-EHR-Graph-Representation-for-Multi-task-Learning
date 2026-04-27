@@ -124,3 +124,33 @@ def parse_dose(val):
 
 merged['dose_value'] = merged['dose_value'].apply(parse_dose)
 
+#### Import into Neo4j
+start_idx = 0
+BATCH_SIZE = 500
+
+query = """
+    UNWIND $rows AS row
+
+    MATCH (a:Admission:Test:MIMIC {id: row.id})
+    MATCH (d:Drug:External:Test {id:row.drug_id})
+
+    MERGE (a)-[:PRESCRIBED]->(d)
+    """
+
+# Process in batches
+for i in tqdm(range(start_idx, len(merged), BATCH_SIZE), desc="Batch processing"):
+
+    batch = merged.iloc[i:i+BATCH_SIZE]
+
+    rows = []
+    for _, row in batch.iterrows():
+        rows.append({
+            "id": row["hadm_id"],
+            'drug_id':row['id']
+        })
+
+    dml_ddl_neo4j(
+        query,
+        progress=False,
+        rows=rows
+    )
