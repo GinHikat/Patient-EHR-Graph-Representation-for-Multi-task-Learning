@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import duckdb
 import re
+from tqdm import tqdm
 
 import sys, os
 project_root = os.path.abspath(os.path.join(os.getcwd(), ".."))
@@ -59,4 +60,67 @@ list_drug = prescription[['drug']].drop_duplicates()
 list_drug['drug_embedding'] = list_drug['drug'].apply(lambda x: embedder.encode_text(x))
 
 prescription = prescription.merge(list_drug, on = 'drug', how = 'left')
+
+## Apply Similarity Drug matching
+prescription = pd.read_parquet(os.path.join(base_data_dir, 'utils', 'prescription_embedding.parquet'))
+prescription['drug_embedding'] = prescription['drug_embedding'].apply(
+    lambda x: np.fromstring(x.replace('\n', ' ').strip('[]'), sep=' ') if isinstance(x, str) else x
+)
+external = pd.read_parquet(os.path.join(base_data_dir, 'utils', 'external.parquet'))
+
+def drug_matching(prescription, external):
+    # Convert embeddings to 2D numpy arrays for matrix operations
+    prescription_embeddings = np.vstack(prescription['drug_embedding'].values) 
+    external_embeddings = np.vstack(external['drug_embedding'].values)          
+
+    # Normalize for cosine similarity
+    prescription_norm = prescription_embeddings / np.linalg.norm(prescription_embeddings, axis=1, keepdims=True)
+    external_norm = external_embeddings / np.linalg.norm(external_embeddings, axis=1, keepdims=True)
+
+    # Compute cosine similarity in batches to avoid memory overflow
+    batch_size = 256
+    best_matches = []
+    best_scores = []
+
+    for i in tqdm(range(0, len(prescription_norm), batch_size), desc = 'Finding best match'):
+        batch = prescription_norm[i:i+batch_size]
+        scores = batch @ external_norm.T  
+        
+        best_idx = np.argmax(scores, axis=1)
+        best_score = scores[np.arange(len(batch)), best_idx]
+        
+        best_matches.extend(external['name'].iloc[best_idx].values)
+        best_scores.extend(best_score)
+        
+        if i % 1000 == 0:
+            print(f"Processed {i}/{len(prescription_norm)}")
+
+    prescription['match'] = best_matches
+    prescription['match_similarity'] = best_scores
+
+    return prescription
+
+prescription = drug_matching(prescription, external)
+prescription = prescription.merge(external.drop('drug_embedding', axis = 1).rename(columns = {'name': 'match'}), on = 'match', how = 'left')
+
+prescription = prescription[prescription['match_similarity'] > 0.65].sort_values('match_similarity')
+prescription = prescription.drop(['drug_embedding', 'match_similarity'], axis = 1)
+
+### Now map back to Prescription for Edge mapping
+merged = prescription_base.merge(prescription, on = 'drug', how = 'right')
+
+# Deal with range values
+def parse_dose(val):
+    if isinstance(val, str) and '-' in val:
+        parts = val.split('-')
+        try:
+            return (float(parts[0]) + float(parts[1])) / 2
+        except:
+            return np.nan
+    try:
+        return float(val)
+    except:
+        return np.nan
+
+merged['dose_value'] = merged['dose_value'].apply(parse_dose)
 

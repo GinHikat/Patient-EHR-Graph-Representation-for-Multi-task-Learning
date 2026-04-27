@@ -13,7 +13,8 @@ model_dict = {
     1: 'cambridgeltl/SapBERT-from-PubMedBERT-fulltext',
     2: 'pritamdeka/S-PubMedBert-MS-MARCO', # 768
     3: 'ncbi/MedCPT-Query-Encoder', # 768
-    4: 'NeuML/pubmedbert-base-embeddings' # 768
+    4: 'NeuML/pubmedbert-base-embeddings', # 768
+    5: 'BAAI/bge-base-en-v1.5' # 768
 }
 
 ner_model_dict = {
