@@ -229,9 +229,23 @@ def get_database_stats_data():
             apoc_res = session.run("CALL apoc.meta.stats() YIELD nodeCount, relCount, labels, relTypesCount")
             data = apoc_res.single()
             if data and data["nodeCount"] > 0:
+                # Fetch hierarchical node combinations instead of APOC's flattened counts to restore UI Hierarchy
+                hierarchy_query = """
+                MATCH (n) 
+                WITH labels(n) as label_list
+                RETURN [l IN label_list WHERE NOT l IN ['Entity', 'Node']] as labels, count(*) as count
+                ORDER BY count DESC
+                LIMIT 50
+                """
+                hierarchy_res = session.run(hierarchy_query)
+                node_breakdown = []
+                for record in hierarchy_res:
+                    if record["labels"]:
+                        node_breakdown.append({"labels": record["labels"], "count": record["count"]})
+
                 return {
                     "total_nodes": data["nodeCount"],
-                    "node_breakdown": [{"labels": [k], "count": v} for k, v in data["labels"].items()],
+                    "node_breakdown": node_breakdown,
                     "total_edges": data["relCount"],
                     "edge_breakdown": [{"type": k, "count": v} for k, v in data["relTypesCount"].items()]
                 }

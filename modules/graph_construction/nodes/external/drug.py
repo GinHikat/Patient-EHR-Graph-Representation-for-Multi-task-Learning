@@ -203,3 +203,103 @@ from shared_functions.global_functions import *
     BATCH_SIZE = 500
     for i in tqdm(range(0, len(rows), BATCH_SIZE), desc="Creating TREAT edges"):
         dml_ddl_neo4j(query, progress=False, rows=rows[i:i+BATCH_SIZE])
+
+####### Use DrugBank indication to connect with Diagnosis, Disease and Phenotype
+    drug_diag = pd.read_csv(os.path.join(base_data_dir, 'utils', 'drug_diag.csv'))
+
+    to_list(drug_diag, 'CCSR_ICD10CM')
+    to_list(drug_diag, 'HPO')
+    to_list(drug_diag, 'ICD10')
+    to_list(drug_diag, 'ICD9CM')
+    to_list(drug_diag, 'MSH')
+    to_list(drug_diag, 'OMIM')
+    
+    query = """
+        UNWIND $rows AS row
+        MATCH (d:Drug:Test:External {id: row.id})
+        
+        // Map Phenotypes (HPO)
+        CALL {
+            WITH d, row
+            UNWIND row.HPO AS phen_id
+            MATCH (p:Phenotype:Test:External {id: phen_id})
+            MERGE (d)-[:TREAT]->(p)
+        }
+        
+        // Map Diagnosis: CCSR
+        CALL {
+            WITH d, row
+            UNWIND row.CCSR_ICD10CM AS diag_id
+            MATCH (dia:Diagnosis:MIMIC:Test {id: diag_id})
+            MERGE (d)-[:TREAT]->(dia)
+        }
+
+        // Map Diagnosis: ICD10
+        CALL {
+            WITH d, row
+            UNWIND row.ICD10 AS diag_id
+            MATCH (dia:Diagnosis:MIMIC:Test {id: diag_id})
+            MERGE (d)-[:TREAT]->(dia)
+        }
+
+        // Map Diagnosis: ICD9CM
+        CALL {
+            WITH d, row
+            UNWIND row.ICD9CM AS diag_id
+            MATCH (dia:Diagnosis:MIMIC:Test {id: diag_id})
+            MERGE (d)-[:TREAT]->(dia)
+        }
+
+        // Map Disease: MSH (mesh_id property)
+        CALL {
+            WITH d, row
+            UNWIND row.MSH AS mesh_id
+            MATCH (a:Disease:Test:External {mesh_id: mesh_id})
+            MERGE (d)-[:TREAT]->(a)
+        }
+
+        // Map Disease: OMIM (found inside the neo4j list property omim_id)
+        CALL {
+            WITH d, row
+            UNWIND row.OMIM AS omim_id
+            // Matches the disease node where omim_id is present in its omim_id list attribute
+            MATCH (a:Disease:Test:External) WHERE omim_id IN a.omim_id
+            MERGE (d)-[:TREAT]->(a)
+        }
+    """
+
+    def parse_list(val):
+        """Safely cast DataFrame cell into a flat Python list."""
+        if isinstance(val, list):
+            return val
+        # Handle numpy arrays if present
+        if hasattr(val, "tolist"):
+            return val.tolist()
+        # Check for pandas/numpy NaN
+        if pd.api.types.is_scalar(val) and pd.isna(val):
+            return []
+        # Wrap single objects
+        return [val]
+
+    # Process in batches
+    for i in tqdm(range(start_idx, len(drug_diag), BATCH_SIZE), desc="Batch processing"):
+
+        batch = drug_diag.iloc[i:i+BATCH_SIZE]
+
+        rows = []
+        for _, row in batch.iterrows():
+            rows.append({
+                "id": row["id"],
+                "HPO": parse_list(row.get("HPO")),
+                "CCSR_ICD10CM": parse_list(row.get("CCSR_ICD10CM")),
+                "ICD10": parse_list(row.get("ICD10")),
+                "ICD9CM": parse_list(row.get("ICD9CM")),
+                "MSH": parse_list(row.get("MSH")),
+                "OMIM": parse_list(row.get("OMIM"))
+            })
+
+        dml_ddl_neo4j(
+            query,
+            progress=False,
+            rows=rows
+        )

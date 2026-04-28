@@ -278,4 +278,95 @@ adm['length_of_stay'] = (adm['dischtime'] - adm['admittime']).dt.total_seconds()
             rows=rows
         )
 
-  
+######## Connect Diagnosis with External Disease and Phenotypes
+
+    diag_external = pd.read_csv(os.path.join(base_data_dir, 'utils', 'icd_map.csv'))
+    
+    query = """
+        UNWIND $rows AS row
+        MATCH (dia:Diagnosis:MIMIC:Test {id: row.icd_code})
+        
+        // Phenotype (HPO) - Direct -> :SIMILAR
+        CALL (dia, row) {
+            UNWIND row.hpo_direct AS phen_id
+            MATCH (p:Phenotype:Test:External {id: phen_id})
+            MERGE (dia)-[:SIMILAR]->(p)
+        }
+        
+        // Phenotype (HPO) - Hierarchy -> :CHILD_OF
+        CALL (dia, row) {
+            UNWIND row.hpo_hierarchy AS phen_id
+            MATCH (p:Phenotype:Test:External {id: phen_id})
+            MERGE (dia)-[:CHILD_OF]->(p)
+        }
+
+        // Disease (OMIM) - Direct -> :SIMILAR
+        CALL (dia, row) {
+            UNWIND row.omim_direct AS omim_id
+            MATCH (d:Disease:Test:External) WHERE omim_id IN d.omim_id
+            MERGE (dia)-[:SIMILAR]->(d)
+        }
+
+        // Disease (OMIM) - Hierarchy -> :CHILD_OF
+        CALL (dia, row) {
+            UNWIND row.omim_hierarchy AS omim_id
+            MATCH (d:Disease:Test:External) WHERE omim_id IN d.omim_id
+            MERGE (dia)-[:CHILD_OF]->(d)
+        }
+
+        // Disease (MSH) - Direct -> :SIMILAR
+        CALL (dia, row) {
+            UNWIND row.mesh_direct AS mesh_id
+            MATCH (d:Disease:Test:External {mesh_id: mesh_id})
+            MERGE (dia)-[:SIMILAR]->(d)
+        }
+
+        // Disease (MSH) - Hierarchy -> :CHILD_OF
+        CALL (dia, row) {
+            UNWIND row.mesh_hierarchy AS mesh_id
+            MATCH (d:Disease:Test:External {mesh_id: mesh_id})
+            MERGE (dia)-[:CHILD_OF]->(d)
+        }
+
+    """
+
+    def parse_comma_sep(val):
+        """Safely cast comma-separated cells into flat Python lists."""
+        # Split strings by comma
+        if isinstance(val, str):
+            return [x.strip() for x in val.split(',') if x.strip()]
+        # Standard lists
+        if isinstance(val, list):
+            return val
+        # Handle numpy arrays if present
+        if hasattr(val, "tolist"):
+            return val.tolist()
+        # Handle NaN
+        if pd.api.types.is_scalar(val) and pd.isna(val):
+            return []
+        # If the column mistakenly parsed numbers directly instead of strings
+        return [str(val)]
+
+    for i in tqdm(range(start_idx, len(diag_external), BATCH_SIZE), desc="Batch processing diag_external"):
+
+        batch = diag_external.iloc[i:i+BATCH_SIZE]
+
+        rows = []
+        for _, row in batch.iterrows():
+            rows.append({
+                # Cast code to string in case pandas parsed numerical IDs like 1520 as integers
+                "icd_code": str(row["icd_code"]), 
+                "hpo_direct": parse_comma_sep(row.get("hpo_direct")),
+                "hpo_hierarchy": parse_comma_sep(row.get("hpo_hierarchy")),
+                "omim_direct": parse_comma_sep(row.get("omim_direct")),
+                "omim_hierarchy": parse_comma_sep(row.get("omim_hierarchy")),
+                "mesh_direct": parse_comma_sep(row.get("mesh_direct")),
+                "mesh_hierarchy": parse_comma_sep(row.get("mesh_hierarchy"))
+            })
+
+        dml_ddl_neo4j(
+            query,
+            progress=False,
+            rows=rows
+        )
+    

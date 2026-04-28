@@ -114,7 +114,7 @@ def snapshot_node(namespace='Test'):
     """
     batch_size = 10000
     num_workers = 4
-    writer = None
+    chunk_idx = 1
 
     with driver.session(database=DATABASE) as session:
         result = session.run(query_nodes, skip=skip_count)
@@ -140,24 +140,47 @@ def snapshot_node(namespace='Test'):
                         res_rows = futures.pop(0).result()
                         df_batch = pd.DataFrame(res_rows, columns=columns)
                         table = pa.Table.from_pandas(df_batch)
-                        if writer is None:
-                            writer = pq.ParquetWriter(output_path, table.schema, compression='snappy')
-                        writer.write_table(table)
+                        
+                        chunk_path = os.path.join(data_dir, f"nodes_part_{next_part}_{chunk_idx}.parquet")
+                        pq.write_table(table, chunk_path, compression='snappy')
+                        chunk_idx += 1
+                        
                         pbar.update(len(res_rows))
                 
                 for f in futures:
                     res_rows = f.result()
                     df_batch = pd.DataFrame(res_rows, columns=columns)
                     table = pa.Table.from_pandas(df_batch)
-                    if writer is None:
-                        writer = pq.ParquetWriter(output_path, table.schema, compression='snappy')
-                    writer.write_table(table)
+                    
+                    chunk_path = os.path.join(data_dir, f"nodes_part_{next_part}_{chunk_idx}.parquet")
+                    pq.write_table(table, chunk_path, compression='snappy')
+                    chunk_idx += 1
+                    
                     pbar.update(len(res_rows))
 
-    if writer:
-        writer.close()
+    # MERGE INTO 1 FILE
+    print(f"\nUnifying schemas and merging into 1 file: {output_path}...")
+    import pyarrow.dataset as ds
+    import glob
+    
+    chunk_pattern = os.path.join(data_dir, f"nodes_part_{next_part}_*.parquet")
+    chunk_files = glob.glob(chunk_pattern)
+    
+    if chunk_files:
+        dataset = ds.dataset(chunk_files)
+        # Re-write into the single file the user expects 
+        with pq.ParquetWriter(output_path, dataset.schema, compression='snappy') as unified_writer:
+            for batch in dataset.to_batches():
+                unified_writer.write_batch(batch)
+                
+        # Clean up temporary chunks
+        for f in chunk_files:
+            try:
+                os.remove(f)
+            except:
+                pass
 
-    print(f"Nodes Parquet saved: {output_path}")
+    print(f"Nodes Parquet successfully flattened & saved: {output_path}")
 
 def snapshot_edge(namespace='Test'):
     '''
@@ -220,7 +243,7 @@ def snapshot_edge(namespace='Test'):
     """
     batch_size = 10000
     num_workers = 4
-    writer = None
+    chunk_idx = 1
 
     with driver.session(database=DATABASE) as session:
         result = session.run(query_edges, skip=skip_count)
@@ -246,24 +269,47 @@ def snapshot_edge(namespace='Test'):
                         res_rows = futures.pop(0).result()
                         df_batch = pd.DataFrame(res_rows, columns=columns)
                         table = pa.Table.from_pandas(df_batch)
-                        if writer is None:
-                            writer = pq.ParquetWriter(output_path, table.schema, compression='snappy')
-                        writer.write_table(table)
+                        
+                        chunk_path = os.path.join(data_dir, f"edges_part_{next_part}_{chunk_idx}.parquet")
+                        pq.write_table(table, chunk_path, compression='snappy')
+                        chunk_idx += 1
+                        
                         pbar.update(len(res_rows))
                 
                 for f in futures:
                     res_rows = f.result()
                     df_batch = pd.DataFrame(res_rows, columns=columns)
                     table = pa.Table.from_pandas(df_batch)
-                    if writer is None:
-                        writer = pq.ParquetWriter(output_path, table.schema, compression='snappy')
-                    writer.write_table(table)
+                    
+                    chunk_path = os.path.join(data_dir, f"edges_part_{next_part}_{chunk_idx}.parquet")
+                    pq.write_table(table, chunk_path, compression='snappy')
+                    chunk_idx += 1
+                    
                     pbar.update(len(res_rows))
 
-    if writer:
-        writer.close()
+    # MERGE INTO 1 FILE
+    print(f"\nUnifying schemas and merging into 1 file: {output_path}...")
+    import pyarrow.dataset as ds
+    import glob
+    
+    chunk_pattern = os.path.join(data_dir, f"edges_part_{next_part}_*.parquet")
+    chunk_files = glob.glob(chunk_pattern)
+    
+    if chunk_files:
+        dataset = ds.dataset(chunk_files)
+        # Re-write into the single file the user expects 
+        with pq.ParquetWriter(output_path, dataset.schema, compression='snappy') as unified_writer:
+            for batch in dataset.to_batches():
+                unified_writer.write_batch(batch)
+                
+        # Clean up temporary chunks
+        for f in chunk_files:
+            try:
+                os.remove(f)
+            except:
+                pass
 
-    print(f"Edges Parquet saved: {output_path}")
+    print(f"Edges Parquet successfully flattened & saved: {output_path}")
 
 def graph_recreation(namespace = 'Test', subset = False):
     '''
