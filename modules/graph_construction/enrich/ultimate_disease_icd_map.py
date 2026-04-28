@@ -3,19 +3,18 @@ import numpy as np
 import duckdb
 
 import sys, os
-project_root = os.path.abspath(os.path.join(os.getcwd(), ".."))
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 if project_root not in sys.path:
     sys.path.append(project_root)
 
 from dotenv import load_dotenv
 load_dotenv() 
-
-data_dir = os.getenv('DATA_DIR')
 base_data_dir = os.path.join(project_root, 'data')
-csv_path = os.path.join(base_data_dir, 'nodes.csv')
+data_dir = os.getenv('DATA_DIR')
 
-sct_root = os.path.join(data_dir, 'SnomedCT', 'csv')
-uml_path = os.path.join(data_dir, 'uml.csv')
+csv_path = os.path.join(base_data_dir, 'nodes.parquet')
+sct_root = os.path.join(data_dir, 'Mapping', 'SnomedCT', 'csv')
+uml_path = os.path.join(base_data_dir, 'utils', 'uml.csv')
 
 f_ext_map = f'{sct_root}/Refset/Map/iisssccRefset_ExtendedMap.csv'
 f_simple_map = f'{sct_root}/Refset/Map/sRefset_SimpleMap.csv'
@@ -25,7 +24,7 @@ f_assoc = f'{sct_root}/Refset/Content/cRefset_Association.csv'
 # Diagnosis nodes, these are originally ICD format
 filtered_df = duckdb.query(f"""
     SELECT * 
-    FROM read_csv_auto('{csv_path}') 
+    FROM read_parquet('{csv_path}') 
     WHERE labels ILIKE '%Diagnosis%'
 """).to_df()
 filtered_df = filtered_df[['id', 'labels', 'name']]
@@ -37,19 +36,14 @@ def get_clean_clinical_mappings(icd_list):
     
     query = f"""
     WITH sct_sources AS (
-        SELECT REPLACE(mapTarget, '.', '') as icd_id, CAST(referencedComponentId AS VARCHAR) as sct_id
-        FROM read_csv_auto('{f_ext_map}') WHERE active=1
-        UNION
-        SELECT REPLACE(mapTarget, '.', '') as icd_id, CAST(referencedComponentId AS VARCHAR) as sct_id
-        FROM read_csv_auto('{f_simple_map}') WHERE active=1
-        UNION
         SELECT REPLACE(i.CODE, '.', '') as icd_id, CAST(s.CODE AS VARCHAR) as sct_id
         FROM read_csv_auto('{uml_path}') i JOIN read_csv_auto('{uml_path}') s ON i.CUI = s.CUI
         WHERE i.SAB IN ('ICD9CM', 'ICD10') AND s.SAB = 'SNOMEDCT_US'
     ),
     sct_corrections AS (
         SELECT CAST(referencedComponentId AS VARCHAR) as old_id, CAST(targetComponentId AS VARCHAR) as new_id 
-        FROM read_csv_auto('{f_assoc}') WHERE active=1
+        FROM read_csv_auto('{f_assoc}') 
+        WHERE active=1 AND refsetId IN ('900000000000527005', '900000000000526001')
     ),
     sct_hierarchy AS (
         SELECT CAST(sourceId AS VARCHAR) as sourceId, CAST(destinationId AS VARCHAR) as parent_id 
@@ -97,16 +91,21 @@ def get_clean_clinical_mappings(icd_list):
 
     return conn.execute(query).df()
 
-
-
 if __name__ == "__main__":
     df = get_clean_clinical_mappings(filtered_df['id'])
     print(df.head())
 
-    # Remove rows that have no mapping
-    mapping_columns = [col for col in df.columns if col != 'icd_code']
-    mapped_only_df = df.dropna(subset=mapping_columns, how='all')
+    # Remove rows that have no mapping (in HPO, OMIM, or MESH)
+    mapping_columns = [col for col in df.columns if col not in ['icd_code', 'snomed_ids']]
+    mapped_only_df = df.dropna(subset=mapping_columns, how='all').copy()
 
     # Remove the HP: prefix
     hpo = ['hpo_direct', 'hpo_hierarchy']
     mapped_only_df[hpo] = mapped_only_df[hpo].replace('HP:', '', regex=True)
+
+    save_path = os.path.join(base_data_dir, 'utils', 'icd_map.csv')
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    mapped_only_df.to_csv(save_path, index=False)
+    print(f"Successfully saved cleanly mapped ICD data to {save_path}")
+
+    mapped_only_df.to_csv(os.path.join(base_data_dir, 'icd_map.csv'), index=False)

@@ -286,25 +286,25 @@ adm['length_of_stay'] = (adm['dischtime'] - adm['admittime']).dt.total_seconds()
         UNWIND $rows AS row
         MATCH (dia:Diagnosis:MIMIC:Test {id: row.icd_code})
         
-        // Phenotype (HPO) - Direct -> :SIMILAR
+        // Phenotype (HPO) - Direct -> :HAS_PHENOTYPE
         CALL (dia, row) {
             UNWIND row.hpo_direct AS phen_id
             MATCH (p:Phenotype:Test:External {id: phen_id})
-            MERGE (dia)-[:SIMILAR]->(p)
+            MERGE (dia)-[:HAS_PHENOTYPE]->(p)
         }
         
         // Phenotype (HPO) - Hierarchy -> :CHILD_OF
         CALL (dia, row) {
             UNWIND row.hpo_hierarchy AS phen_id
             MATCH (p:Phenotype:Test:External {id: phen_id})
-            MERGE (dia)-[:CHILD_OF]->(p)
+            MERGE (dia)-[:HAS_PHENOTYPE]->(p)
         }
 
-        // Disease (OMIM) - Direct -> :SIMILAR
+        // Disease (OMIM) - Direct -> :EQUIVALENT_TO
         CALL (dia, row) {
             UNWIND row.omim_direct AS omim_id
             MATCH (d:Disease:Test:External) WHERE omim_id IN d.omim_id
-            MERGE (dia)-[:SIMILAR]->(d)
+            MERGE (dia)-[:EQUIVALENT_TO]->(d)
         }
 
         // Disease (OMIM) - Hierarchy -> :CHILD_OF
@@ -314,11 +314,11 @@ adm['length_of_stay'] = (adm['dischtime'] - adm['admittime']).dt.total_seconds()
             MERGE (dia)-[:CHILD_OF]->(d)
         }
 
-        // Disease (MSH) - Direct -> :SIMILAR
+        // Disease (MSH) - Direct -> :EQUIVALENT_TO
         CALL (dia, row) {
             UNWIND row.mesh_direct AS mesh_id
             MATCH (d:Disease:Test:External {mesh_id: mesh_id})
-            MERGE (dia)-[:SIMILAR]->(d)
+            MERGE (dia)-[:EQUIVALENT_TO]->(d)
         }
 
         // Disease (MSH) - Hierarchy -> :CHILD_OF

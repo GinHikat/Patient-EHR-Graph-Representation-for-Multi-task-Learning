@@ -18,12 +18,49 @@ from shared_functions.global_functions import query_neo4j, driver, DATABASE, dml
 
 data_dir = os.path.join(project_root, 'data')
 
+
+def custom_unify_schemas(chunk_files):
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    all_fields = {}
+    for f in chunk_files:
+        try:
+            schema = pq.read_schema(f)
+            for field in schema:
+                if field.name not in all_fields:
+                    all_fields[field.name] = field.type
+                else:
+                    existing_type = all_fields[field.name]
+                    if existing_type == field.type:
+                        continue
+                    if pa.types.is_null(field.type) or pa.types.is_null(existing_type):
+                        all_fields[field.name] = existing_type if not pa.types.is_null(existing_type) else field.type
+                    elif pa.types.is_string(field.type) or pa.types.is_string(existing_type):
+                        all_fields[field.name] = pa.string()
+                    elif pa.types.is_floating(field.type) and pa.types.is_integer(existing_type):
+                        all_fields[field.name] = pa.float64()
+                    elif pa.types.is_integer(field.type) and pa.types.is_floating(existing_type):
+                        all_fields[field.name] = pa.float64()
+                    else:
+                        all_fields[field.name] = pa.string()
+        except Exception:
+            pass
+    return pa.schema([pa.field(name, typ) for name, typ in all_fields.items()])
+
+def sanitize_dataframe(df):
+    """Enforces pure strings on object columns to stop PyArrow mixed-type crashes."""
+    for col in df.select_dtypes(include=['object']).columns:
+        null_mask = df[col].isnull()
+        df[col] = df[col].astype(str)
+        df.loc[null_mask, col] = None
+    return df
+
 def process_node_batch(batch, all_keys):
     """Normalize a batch of node records and stringify complex types."""
     rows = []
     for record in batch:
         row = {
-            "id": record["id"],
+            "id": str(record["id"]),
             "labels": ":".join(record["labels"])
         }
         props = record["props"]
@@ -41,8 +78,8 @@ def process_edge_batch(batch, all_edge_keys):
     edge_rows = []
     for record in batch:
         row = {
-            "source": record["source"],
-            "target": record["target"],
+            "source": str(record["source"]),
+            "target": str(record["target"]),
             "type": record["type"]
         }
         props = record["props"]
@@ -90,7 +127,7 @@ def snapshot_node(namespace='Test'):
 
     # CHECKPOINT: Find existing rows to resume
     skip_count = 0
-    existing_parts = [f for f in os.listdir(data_dir) if f.startswith("nodes_part_") and f.endswith(".parquet")]
+    existing_parts = [f for f in os.listdir(data_dir) if (f.startswith("nodes_part_") or f == "nodes.parquet") and f.endswith(".parquet")]
     for part in existing_parts:
         try:
             meta = pq.read_metadata(os.path.join(data_dir, part))
@@ -139,6 +176,9 @@ def snapshot_node(namespace='Test'):
                     if len(futures) >= num_workers:
                         res_rows = futures.pop(0).result()
                         df_batch = pd.DataFrame(res_rows, columns=columns)
+                        
+                        df_batch = sanitize_dataframe(df_batch)
+                        
                         table = pa.Table.from_pandas(df_batch)
                         
                         chunk_path = os.path.join(data_dir, f"nodes_part_{next_part}_{chunk_idx}.parquet")
@@ -150,6 +190,9 @@ def snapshot_node(namespace='Test'):
                 for f in futures:
                     res_rows = f.result()
                     df_batch = pd.DataFrame(res_rows, columns=columns)
+                    
+                    df_batch = sanitize_dataframe(df_batch)
+                    
                     table = pa.Table.from_pandas(df_batch)
                     
                     chunk_path = os.path.join(data_dir, f"nodes_part_{next_part}_{chunk_idx}.parquet")
@@ -158,22 +201,23 @@ def snapshot_node(namespace='Test'):
                     
                     pbar.update(len(res_rows))
 
-    # MERGE INTO 1 FILE
-    print(f"\nUnifying schemas and merging into 1 file: {output_path}...")
+    # MERGE FULL GRAPH INTO exactly 1 final file (nodes.parquet)
+    output_path = os.path.join(data_dir, "nodes.parquet")
+    print(f"\nUnifying absolutely all parts into 1 final file: {output_path}...")
     import pyarrow.dataset as ds
     import glob
     
-    chunk_pattern = os.path.join(data_dir, f"nodes_part_{next_part}_*.parquet")
+    chunk_pattern = os.path.join(data_dir, "nodes_part_*.parquet")
     chunk_files = glob.glob(chunk_pattern)
     
     if chunk_files:
-        dataset = ds.dataset(chunk_files)
-        # Re-write into the single file the user expects 
-        with pq.ParquetWriter(output_path, dataset.schema, compression='snappy') as unified_writer:
-            for batch in dataset.to_batches():
-                unified_writer.write_batch(batch)
+        unified_schema = custom_unify_schemas(chunk_files)
+        with pq.ParquetWriter(output_path, unified_schema, compression='snappy') as unified_writer:
+            for f in chunk_files:
+                table = pq.read_table(f)
+                table = table.cast(unified_schema)
+                unified_writer.write_table(table)
                 
-        # Clean up temporary chunks
         for f in chunk_files:
             try:
                 os.remove(f)
@@ -215,7 +259,7 @@ def snapshot_edge(namespace='Test'):
 
     # CHECKPOINT: Find existing rows to resume
     skip_count = 0
-    existing_parts = [f for f in os.listdir(data_dir) if f.startswith("edges_part_") and f.endswith(".parquet")]
+    existing_parts = [f for f in os.listdir(data_dir) if (f.startswith("edges_part_") or f == "edges.parquet") and f.endswith(".parquet")]
     for part in existing_parts:
         try:
             meta = pq.read_metadata(os.path.join(data_dir, part))
@@ -230,7 +274,7 @@ def snapshot_edge(namespace='Test'):
     next_part = len(existing_parts) + 1
     output_path = os.path.join(data_dir, f"edges_part_{next_part}.parquet")
 
-    # Fetch edges
+    # Fetch edges without ORDER BY to prevent MemoryPoolOutOfMemoryError on large scale
     query_edges = f"""
     MATCH (a:{namespace})-[r]->(b:{namespace})
     RETURN 
@@ -238,7 +282,6 @@ def snapshot_edge(namespace='Test'):
         coalesce(b.id, elementId(b)) AS target,
         type(r) AS type,
         properties(r) AS props
-    ORDER BY source, target
     SKIP $skip
     """
     batch_size = 10000
@@ -268,6 +311,9 @@ def snapshot_edge(namespace='Test'):
                     if len(futures) >= num_workers:
                         res_rows = futures.pop(0).result()
                         df_batch = pd.DataFrame(res_rows, columns=columns)
+                        
+                        df_batch = sanitize_dataframe(df_batch)
+                        
                         table = pa.Table.from_pandas(df_batch)
                         
                         chunk_path = os.path.join(data_dir, f"edges_part_{next_part}_{chunk_idx}.parquet")
@@ -279,6 +325,9 @@ def snapshot_edge(namespace='Test'):
                 for f in futures:
                     res_rows = f.result()
                     df_batch = pd.DataFrame(res_rows, columns=columns)
+                    
+                    df_batch = sanitize_dataframe(df_batch)
+                    
                     table = pa.Table.from_pandas(df_batch)
                     
                     chunk_path = os.path.join(data_dir, f"edges_part_{next_part}_{chunk_idx}.parquet")
@@ -287,22 +336,23 @@ def snapshot_edge(namespace='Test'):
                     
                     pbar.update(len(res_rows))
 
-    # MERGE INTO 1 FILE
-    print(f"\nUnifying schemas and merging into 1 file: {output_path}...")
+    # MERGE FULL GRAPH INTO exactly 1 final file (edges.parquet)
+    output_path = os.path.join(data_dir, "edges.parquet")
+    print(f"\nUnifying absolutely all parts into 1 final file: {output_path}...")
     import pyarrow.dataset as ds
     import glob
     
-    chunk_pattern = os.path.join(data_dir, f"edges_part_{next_part}_*.parquet")
+    chunk_pattern = os.path.join(data_dir, "edges_part_*.parquet")
     chunk_files = glob.glob(chunk_pattern)
     
     if chunk_files:
-        dataset = ds.dataset(chunk_files)
-        # Re-write into the single file the user expects 
-        with pq.ParquetWriter(output_path, dataset.schema, compression='snappy') as unified_writer:
-            for batch in dataset.to_batches():
-                unified_writer.write_batch(batch)
+        unified_schema = custom_unify_schemas(chunk_files)
+        with pq.ParquetWriter(output_path, unified_schema, compression='snappy') as unified_writer:
+            for f in chunk_files:
+                table = pq.read_table(f)
+                table = table.cast(unified_schema)
+                unified_writer.write_table(table)
                 
-        # Clean up temporary chunks
         for f in chunk_files:
             try:
                 os.remove(f)
