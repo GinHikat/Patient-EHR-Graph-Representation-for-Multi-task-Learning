@@ -1,6 +1,11 @@
 # Patient EHR Graph Representation for Multi-task Learning
 
-A research project that constructs a structured **Knowledge Graph** from patient Electronic Health Records (EHR) and Medical/Temporal ontologies, and exposes it through a full-stack web application for interactive graph exploration.
+A research project that constructs a structured **Knowledge Graph** from patient Electronic Health Records (EHR) and Medical/Temporal ontologies. The project currently integrates:
+- **External Knowledge Graph:** Includes interactions for drug-drug, disease-disease, and phenotypes.
+- **MIMIC Patient EHR Graph:** Covers admissions, transfers, lab events, clinical notes, diagnoses, procedures, and prescriptions.
+- **Knowledge Integration:** Connects the MIMIC EHR with external knowledge through mappings like drug-prescription, diagnosis-disease/phenotype, and diagnosis-drug.
+
+The resulting graph is exposed through a full-stack web application for interactive exploration and acts as a robust foundation for multi-task learning models.
 
 ---
 
@@ -11,10 +16,11 @@ A research project that constructs a structured **Knowledge Graph** from patient
 ├── App/
 │   ├── backend/                  # FastAPI backend
 │   └── frontend/                 # React + Vite frontend
-├── modules/
-│   ├── dataset_preprocessing/    # Raw data cleaning scripts
-│   └── graph_construction/       # Neo4j graph ingestion scripts
-├── notebooks/            
+├── modules/                      # Core pipeline logic
+│   ├── dataset_preprocessing/    # Cleaning & standardization for MIMIC and external sources
+│   ├── graph_construction/       # Neo4j graph ingestion, enrichment mappings, and snapshots
+│   └── models/                   # Graph extraction, embedding models, and training scripts
+├── notebooks/                    # Jupyter notebooks for testing and experimentation
 ├── shared_functions/             # Shared utilities (Google Sheets, helpers)
 ├── secrets/                      # Credentials 
 ├── .env.example       
@@ -31,7 +37,7 @@ A research project that constructs a structured **Knowledge Graph** from patient
 | **Frontend** | React + Vite + Vercel | Interactive graph visualization          |
 | **Backend**  | FastAPI + Render      | REST API, graph query logic              |
 | **Database** | Neo4j                 | Graph storage & traversal                |
-| **Modules**  | Python scripts        | Dataset preprocessing & graph ingestion  |
+| **Modules**  | Python scripts        | Data preprocessing, graph ingestion, & models |
 | **Shared**   | Python utilities      | Google Sheets/Drive integration, helpers |
 
 ---
