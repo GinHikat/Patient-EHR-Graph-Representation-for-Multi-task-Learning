@@ -115,35 +115,35 @@ class ProcDiagExtractor:
             # procedure = [procedure_dict[i] for i in procedure]
             diagnosis = [diagnosis_dict[i] for i in diagnosis]
 
-            # query = """
-            #     UNWIND $rows AS row
+            query = """
+                UNWIND $rows AS row
 
-            #     MATCH (a:Admission:Test:MIMIC {id: row.hadm_id})
-            #     # MATCH (p:Procedure:Test:MIMIC {id: row.procedure})
-            #     MATCH (d:Diagnosis:Test:MIMIC {id: row.diagnosis})
+                MATCH (a:Admission:Test:MIMIC {id: row.hadm_id})
+                # MATCH (p:Procedure:Test:MIMIC {id: row.procedure})
+                MATCH (d:Diagnosis:Test:MIMIC {id: row.diagnosis})
 
-            #     WITH a, row
-            #     # UNWIND row.procedure AS procedure
-            #     # MERGE (p:Procedure:Test:MIMIC {id: procedure})
-            #     # MERGE (a)-[:HAS_PROCEDURE]->(p)
+                WITH a, row
+                # UNWIND row.procedure AS procedure
+                # MERGE (p:Procedure:Test:MIMIC {id: procedure})
+                # MERGE (a)-[:HAS_PROCEDURE]->(p)
 
-            #     WITH d, row
-            #     UNWIND row.diagnosis AS diagnosis
-            #     MERGE (diag:Diagnosis:Test:MIMIC {id: diagnosis})
-            #     MERGE (d)-[:HAS_DIAGNOSIS]->(diag)
+                WITH d, row
+                UNWIND row.diagnosis AS diagnosis
+                MERGE (diag:Diagnosis:Test:MIMIC {id: diagnosis})
+                MERGE (d)-[:HAS_DIAGNOSIS]->(diag)
 
-            #     """
+                """
 
-            # rows = []
-            # rows.append({
-            #     "hadm_id": i['hadm_id'],
-            #     # "procedure": procedure,
-            #     "diagnosis": diagnosis
-            # })
+            rows = []
+            rows.append({
+                "hadm_id": i['hadm_id'],
+                # "procedure": procedure,
+                "diagnosis": diagnosis
+            })
 
-            # dml_ddl_neo4j(
-            #     query,
-            #     progress=False,
-            #     rows=rows
-            # )
+            dml_ddl_neo4j(
+                query,
+                progress=False,
+                rows=rows
+            )
 
