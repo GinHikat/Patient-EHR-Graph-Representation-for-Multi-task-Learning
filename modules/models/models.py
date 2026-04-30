@@ -8,6 +8,8 @@ from sklearn.metrics import f1_score, accuracy_score, precision_score, recall_sc
 from transformers import pipeline
 import pandas as pd
 from tqdm import tqdm
+import torch.nn as nn
+from transformers.modeling_outputs import SequenceClassifierOutput
 
 model_dict = {
     1: 'cambridgeltl/SapBERT-from-PubMedBERT-fulltext',
@@ -170,6 +172,27 @@ class ProcedureModel:
             'mAP': average_precision_score(labels, probs, average='macro')
         }
 
+        # Add Top-K Metrics (k=5 and k=10)
+        for k in [5, 10]:
+            pk_list = []
+            rk_list = []
+            for i in range(len(labels)):
+                # Get indices of top k predictions
+                top_k_idx = np.argsort(probs[i])[-k:]
+                true_idx = np.where(labels[i] == 1)[0]
+                
+                if len(true_idx) == 0:
+                    continue
+                
+                # Hits: how many of our top k are in the ground truth
+                hits = np.intersect1d(top_k_idx, true_idx)
+                
+                pk_list.append(len(hits) / k)
+                rk_list.append(len(hits) / len(true_idx))
+                
+            metrics[f'precision@{k}'] = np.mean(pk_list) if pk_list else 0.0
+            metrics[f'recall@{k}'] = np.mean(rk_list) if rk_list else 0.0
+
         try:
             metrics['roc_auc_macro'] = roc_auc_score(labels, probs, average='macro')
             metrics['roc_auc_micro'] = roc_auc_score(labels, probs, average='micro')
@@ -216,6 +239,160 @@ class ProcedureModel:
                 all_preds.append(preds)
                 
         return np.vstack(all_preds) if all_preds else np.array([])
+
+class LAATLayer(nn.Module):
+    """
+    Label Attention Layer (LAAT) as described in the paper.
+    Computes label-specific document representations using an attention mechanism.
+    """
+    def __init__(self, hidden_size, num_labels):
+        super().__init__()
+        # Label query matrix (U in the paper)
+        self.U = nn.Parameter(torch.randn(num_labels, hidden_size))
+        # Final weights for classification (W in the paper)
+        self.W = nn.Parameter(torch.randn(num_labels, hidden_size))
+        # Final bias
+        self.bias = nn.Parameter(torch.zeros(num_labels))
+
+    def forward(self, H):
+        # H: Document hidden states [batch_size, seq_len, hidden_size]
+        # U: Label query vectors [num_labels, hidden_size]
+        
+        # Calculate attention scores: [B, L, N]
+        # Score_ln = h_l^T u_n
+        scores = torch.matmul(H, self.U.transpose(0, 1))
+        
+        # Softmax over sequence length L to get importance of each word for each label
+        A = torch.softmax(scores, dim=1) # [B, L, N]
+        
+        # Label-specific document representation V = A^T H -> [B, N, D]
+        V = torch.matmul(A.transpose(1, 2), H)
+        
+        # Final classification logit_n = v_n^T w_n + b_n
+        # This is equivalent to element-wise multiplication and summing over the hidden dimension
+        logits = (V * self.W).sum(dim=-1) + self.bias # [B, N]
+        
+        return logits
+
+class PLMICD_Internal(nn.Module):
+    """
+    Internal nn.Module for PLM-ICD.
+    Combines a PLM encoder with a LAAT head.
+    """
+    def __init__(self, num_labels, model_name="yikuan8/Clinical-Longformer"):
+        super().__init__()
+        self.encoder = AutoModel.from_pretrained(model_name)
+        self.hidden_size = self.encoder.config.hidden_size
+        self.laat = LAATLayer(self.hidden_size, num_labels)
+
+    def forward(self, input_ids, attention_mask=None):
+        outputs = self.encoder(input_ids, attention_mask=attention_mask)
+        H = outputs.last_hidden_state
+        logits = self.laat(H)
+        return SequenceClassifierOutput(logits=logits)
+
+class PLMICDModel(ProcedureModel):
+    """
+    PLM-ICD Model wrapper compatible with ProcedureModel.
+    Uses Clinical-Longformer and Label Attention (LAAT).
+    """
+    def __init__(self, num_labels: int, model_name: str = "yikuan8/Clinical-Longformer", device: Optional[str] = None):
+        if device:
+            self.device = torch.device(device)
+        else:
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            
+        print(f"Using device: {self.device}")
+        
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        # Initialize the custom PLM-ICD architecture
+        self.model = PLMICD_Internal(num_labels, model_name)
+        self.model.to(self.device)
+
+class MultiSynonymAttention(nn.Module):
+    """
+    Multi-Synonym Attention Layer (MSMN) as described in the paper.
+    Uses multiple queries (synonyms) per label and aggregates their document representations.
+    """
+    def __init__(self, hidden_size, num_labels, num_synonyms=3):
+        super().__init__()
+        self.num_labels = num_labels
+        self.num_synonyms = num_synonyms
+        self.hidden_size = hidden_size
+        
+        # Multiple queries per label representing synonyms [N, M, D]
+        self.Q = nn.Parameter(torch.randn(num_labels, num_synonyms, hidden_size))
+        
+        # Biaffine weight matrix [D, D]
+        self.W = nn.Parameter(torch.randn(hidden_size, hidden_size))
+        # Final bias
+        self.bias = nn.Parameter(torch.zeros(num_labels))
+
+    def forward(self, H):
+        # H: [B, L, D]
+        B, L, D = H.shape
+        N = self.num_labels
+        M = self.num_synonyms
+        
+        # Flatten Q to treat each synonym as an independent query head
+        Q_flat = self.Q.view(-1, D) # [N*M, D]
+        
+        # Calculate attention scores for each synonym head: [B, L, N*M]
+        scores = torch.matmul(H, Q_flat.transpose(0, 1))
+        A = torch.softmax(scores, dim=1) # [B, L, N*M]
+        
+        # Synonym-specific document representations: [B, N*M, D]
+        V_all = torch.matmul(A.transpose(1, 2), H)
+        V_all = V_all.view(B, N, M, D)
+        
+        # Aggregation: Max-pooling across synonyms to capture the most relevant match
+        V, _ = torch.max(V_all, dim=2) # [B, N, D]
+        
+        # Aggregate synonym queries themselves (mean-pooling)
+        Q_agg = self.Q.mean(dim=1) # [N, D]
+        
+        # Biaffine Transformation: logit_n = v_n^T W q_n + b_n
+        # First compute V * W -> [B, N, D]
+        VW = torch.matmul(V, self.W)
+        # Then (VW) dot Q_agg + bias -> [B, N]
+        logits = (VW * Q_agg).sum(dim=-1) + self.bias
+        
+        return logits
+
+class MSMN_Internal(nn.Module):
+    """
+    Internal nn.Module for MSMN.
+    Combines a PLM encoder with a Multi-Synonym Attention head.
+    """
+    def __init__(self, num_labels, model_name="yikuan8/Clinical-Longformer", num_synonyms=3):
+        super().__init__()
+        self.encoder = AutoModel.from_pretrained(model_name)
+        self.hidden_size = self.encoder.config.hidden_size
+        self.msa = MultiSynonymAttention(self.hidden_size, num_labels, num_synonyms)
+
+    def forward(self, input_ids, attention_mask=None):
+        outputs = self.encoder(input_ids, attention_mask=attention_mask)
+        H = outputs.last_hidden_state
+        logits = self.msa(H)
+        return SequenceClassifierOutput(logits=logits)
+
+class MSMNModel(ProcedureModel):
+    """
+    MSMN Model wrapper compatible with ProcedureModel.
+    Uses Clinical-Longformer and Multi-Synonym Attention with Biaffine head.
+    """
+    def __init__(self, num_labels: int, model_name: str = "yikuan8/Clinical-Longformer", device: Optional[str] = None, num_synonyms: int = 3):
+        if device:
+            self.device = torch.device(device)
+        else:
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            
+        print(f"Using device: {self.device}")
+        
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        # Initialize the custom MSMN architecture
+        self.model = MSMN_Internal(num_labels, model_name, num_synonyms=num_synonyms)
+        self.model.to(self.device)
 
 class NERModel:
     def __init__(self, model_choice: Union[int, str] = 1, device: Optional[str] = None):

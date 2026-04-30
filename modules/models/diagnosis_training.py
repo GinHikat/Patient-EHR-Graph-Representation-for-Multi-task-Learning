@@ -31,12 +31,12 @@ temp_root = os.path.dirname(script_dir)
 if temp_root not in sys.path:
     sys.path.append(temp_root)
 
-from modules.models import ProcedureModel, RadiologyDataset
+from modules.models import ProcedureModel, PLMICDModel, MSMNModel, RadiologyDataset
 
 data_dir = os.path.join(temp_root, 'data', 'Note')
 cleaned_data_dir = os.path.join(data_dir, 'cleaned')
 
-def main(load_dir=None, truncation_level=200, others_limit=None, epochs=15):
+def main(load_dir=None, truncation_level=200, others_limit=None, epochs=15, model_type='longformer'):
     # Setup models root
     models_root = os.path.join(temp_root, "models")
     os.makedirs(models_root, exist_ok=True)
@@ -90,8 +90,9 @@ def main(load_dir=None, truncation_level=200, others_limit=None, epochs=15):
     mlb = MultiLabelBinarizer()
     binary_labels = mlb.fit_transform(df['category'])
     df['labels'] = list(binary_labels.astype(float))
+    # num_labels is the number of labels AFTER truncation and mapping to 'Other'
     num_labels = len(mlb.classes_)
-    print(f"Total Unique Labels: {num_labels}")
+    print(f"Total Unique Labels (after truncation): {num_labels}")
 
     # Setup run folder for saving
     run_folder_name = f"diagnosis_run_{truncation_level}_{num_labels}"
@@ -112,7 +113,15 @@ def main(load_dir=None, truncation_level=200, others_limit=None, epochs=15):
     print("Initializing Model...")
     torch.cuda.empty_cache()
 
-    pm = ProcedureModel(num_labels=num_labels) 
+    if model_type == 'plmicd':
+        print("Using PLM-ICD Model (Label Attention)...")
+        pm = PLMICDModel(num_labels=num_labels)
+    elif model_type == 'msmn':
+        print("Using MSMN Model (Multi-Synonym Attention)...")
+        pm = MSMNModel(num_labels=num_labels)
+    else:
+        print("Using Standard ProcedureModel (Clinical-Longformer)...")
+        pm = ProcedureModel(num_labels=num_labels)
     
     # Save tokenizer and label encoder once at the start
     print(f"Saving setup files to {save_path}...")
@@ -270,11 +279,14 @@ if __name__ == "__main__":
     parser.add_argument("--truncation_level", type=int, default=200)
     parser.add_argument("--others_limit", type=int, default=None, help="Maximum number of 'Other' labels to keep (defaults to 2x truncation_level)")
     parser.add_argument("--epochs", type=int, default=15)
+    parser.add_argument("--model_type", type=str, default='longformer', choices=['longformer', 'plmicd', 'msmn'], 
+                        help="Model architecture to use: 'longformer' (default), 'plmicd', or 'msmn'")
     args = parser.parse_args()
     
     main(
         load_dir=args.load_dir, 
         truncation_level=args.truncation_level, 
         others_limit=args.others_limit,
-        epochs=args.epochs
+        epochs=args.epochs,
+        model_type=args.model_type
     )

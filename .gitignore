@@ -18,6 +18,8 @@ notebooks/*
 
 modules/models/.models/*
 
+Clinical-Note-Extraction/
+
 .gitnexus
 
 AGENTS.md
