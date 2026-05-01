@@ -8,15 +8,16 @@ from transformers import AutoModel, AutoTokenizer, AutoModelForSequenceClassific
 script_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(os.path.dirname(script_dir))
 
-map_dir = os.path.join(project_root, 'data', 'generalize')
+map_dir = os.path.join(project_root, 'data')
 diagnosis_map = pd.read_csv(os.path.join(map_dir, 'diagnosis_map.csv'))
-procedure_map = pd.read_csv(os.path.join(map_dir, 'procedure_map.csv'))
+# procedure_map = pd.read_csv(os.path.join(map_dir, 'procedure_map.csv'))
 
 diagnosis_dict = diagnosis_map.set_index('ccsr_description')['ccsr_category'].to_dict()
-procedure_dict = procedure_map.set_index('ccsr_description')['ccsr_category'].to_dict()
+# procedure_dict = procedure_map.set_index('ccsr_description')['ccsr_category'].to_dict()
 
 from modules.models.preparation.processing import Extractor
 from shared_functions.global_functions import *
+from modules.models.models import PLMICD_Internal
 
 extractor = Extractor()
 
@@ -28,17 +29,29 @@ class ProcDiagExtractor:
             
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.tokenizer = AutoTokenizer.from_pretrained(self.checkpoint, local_files_only=True)
-        self.model = AutoModelForSequenceClassification.from_pretrained(self.checkpoint, local_files_only=True)
-        self.model.to(self.device)
-        self.model.eval()
         
         self.mlb = joblib.load(os.path.join(self.checkpoint, "mlb.pkl"))
+        num_labels = len(self.mlb.classes_)
 
-    def load_model(self):
-        return AutoModelForSequenceClassification.from_pretrained(self.checkpoint, local_files_only=True)
+        # Determine model type from checkpoint folder name suffix
+        model_tag = checkpoint.split('_')[-1]
 
-    def load_tokenizer(self):
-        return AutoTokenizer.from_pretrained(self.checkpoint, local_files_only=True)
+        if model_tag == 'plmicd':
+            self.model = PLMICD_Internal(num_labels=num_labels)
+            state_dict_path = os.path.join(self.checkpoint, "model_state.pt")
+            if os.path.exists(state_dict_path):
+                self.model.load_state_dict(torch.load(state_dict_path, map_location=self.device))
+            else:
+                # Try default transformers name if model_state.pt doesn't exist
+                bin_path = os.path.join(self.checkpoint, "pytorch_model.bin")
+                if os.path.exists(bin_path):
+                    self.model.load_state_dict(torch.load(bin_path, map_location=self.device))
+        else:
+            self.model = AutoModelForSequenceClassification.from_pretrained(self.checkpoint, local_files_only=True)
+            
+        self.model.to(self.device)
+        self.model.eval()
+
 
     def predict(self, text, text_pair=None, threshold=0.5):
         # Tokenize (handle single or pair inputs)
