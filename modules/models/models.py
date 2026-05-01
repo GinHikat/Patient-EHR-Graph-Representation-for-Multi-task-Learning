@@ -248,11 +248,16 @@ class LAATLayer(nn.Module):
     def __init__(self, hidden_size, num_labels):
         super().__init__()
         # Label query matrix (U in the paper)
-        self.U = nn.Parameter(torch.randn(num_labels, hidden_size))
+        self.U = nn.Parameter(torch.zeros(num_labels, hidden_size))
         # Final weights for classification (W in the paper)
-        self.W = nn.Parameter(torch.randn(num_labels, hidden_size))
+        self.W = nn.Parameter(torch.zeros(num_labels, hidden_size))
         # Final bias
         self.bias = nn.Parameter(torch.zeros(num_labels))
+        self._init_weights()
+
+    def _init_weights(self):
+        nn.init.xavier_uniform_(self.U)
+        nn.init.xavier_uniform_(self.W)
 
     def forward(self, H):
         # H: Document hidden states [batch_size, seq_len, hidden_size]
@@ -291,6 +296,16 @@ class PLMICD_Internal(nn.Module):
         logits = self.laat(H)
         return SequenceClassifierOutput(logits=logits)
 
+    def gradient_checkpointing_enable(self, **kwargs):
+        self.encoder.gradient_checkpointing_enable(**kwargs)
+
+    def gradient_checkpointing_disable(self):
+        self.encoder.gradient_checkpointing_disable()
+
+    def save_pretrained(self, save_directory):
+        self.encoder.save_pretrained(save_directory)
+        self.encoder.config.save_pretrained(save_directory)
+
 class PLMICDModel(ProcedureModel):
     """
     PLM-ICD Model wrapper compatible with ProcedureModel.
@@ -321,12 +336,17 @@ class MultiSynonymAttention(nn.Module):
         self.hidden_size = hidden_size
         
         # Multiple queries per label representing synonyms [N, M, D]
-        self.Q = nn.Parameter(torch.randn(num_labels, num_synonyms, hidden_size))
+        self.Q = nn.Parameter(torch.zeros(num_labels, num_synonyms, hidden_size))
         
         # Biaffine weight matrix [D, D]
-        self.W = nn.Parameter(torch.randn(hidden_size, hidden_size))
+        self.W = nn.Parameter(torch.zeros(hidden_size, hidden_size))
         # Final bias
         self.bias = nn.Parameter(torch.zeros(num_labels))
+        self._init_weights()
+
+    def _init_weights(self):
+        nn.init.xavier_uniform_(self.Q)
+        nn.init.xavier_uniform_(self.W)
 
     def forward(self, H):
         # H: [B, L, D]
@@ -375,6 +395,16 @@ class MSMN_Internal(nn.Module):
         H = outputs.last_hidden_state
         logits = self.msa(H)
         return SequenceClassifierOutput(logits=logits)
+
+    def gradient_checkpointing_enable(self, **kwargs):
+        self.encoder.gradient_checkpointing_enable(**kwargs)
+
+    def gradient_checkpointing_disable(self):
+        self.encoder.gradient_checkpointing_disable()
+
+    def save_pretrained(self, save_directory):
+        self.encoder.save_pretrained(save_directory)
+        self.encoder.config.save_pretrained(save_directory)
 
 class MSMNModel(ProcedureModel):
     """

@@ -16,11 +16,12 @@ import os
 import sys
 import warnings
 import logging
-import dotenv
-import argparse
 import joblib
+import gc
+import argparse
+import dotenv
 
-dotenv.load_dotenv()
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 warnings.filterwarnings("ignore")
 logging.getLogger("transformers").setLevel(logging.ERROR)
@@ -33,7 +34,7 @@ if temp_root not in sys.path:
 
 from modules.models import ProcedureModel, PLMICDModel, MSMNModel, RadiologyDataset
 
-data_dir = os.path.join(temp_root, 'data', 'Note')
+data_dir = os.path.join(temp_root, 'data')
 cleaned_data_dir = os.path.join(data_dir, 'cleaned')
 
 def main(load_dir=None, truncation_level=200, others_limit=None, epochs=15, model_type='longformer'):
@@ -41,17 +42,21 @@ def main(load_dir=None, truncation_level=200, others_limit=None, epochs=15, mode
     models_root = os.path.join(temp_root, "models")
     os.makedirs(models_root, exist_ok=True)
 
-
     # Load dataset
     print("Loading dataset...")
-    csv_path = os.path.join(cleaned_data_dir, 'final_diagnosis.csv') 
+    csv_path = os.path.join(data_dir, 'final_diagnosis.csv') 
     df = pd.read_csv(csv_path)
     df['category'] = df['category'].apply(ast.literal_eval)
 
-    # Use existing 'text' column as input
-    print("Using 'text' column as input...")
-    if 'text' not in df.columns:
-        raise KeyError("Dataset must contain a 'text' column.")
+    # Combine 'discharge' and 'radiology' columns for input
+    print("Combining 'discharge' and 'radiology' columns for input...")
+    required_cols = ['discharge', 'radiology']
+    for col in required_cols:
+        if col not in df.columns:
+            raise KeyError(f"Dataset must contain a '{col}' column.")
+    
+    # Fill NaN with empty strings and concatenate
+    df['text'] = "Discharge Summary: " + df['discharge'].fillna('') + "\n\nRadiology Report: " + df['radiology'].fillna('')
 
     # Label Processing
     print(f"Truncating categories with less than {truncation_level} occurrences...")
@@ -95,7 +100,7 @@ def main(load_dir=None, truncation_level=200, others_limit=None, epochs=15, mode
     print(f"Total Unique Labels (after truncation): {num_labels}")
 
     # Setup run folder for saving
-    run_folder_name = f"diagnosis_run_{truncation_level}_{num_labels}"
+    run_folder_name = f"diagnosis_run_{truncation_level}_{num_labels}_{model_type}"
     save_path = os.path.join(models_root, run_folder_name)
     os.makedirs(save_path, exist_ok=True)
     print(f"Results will be saved to: {save_path}")
@@ -159,8 +164,19 @@ def main(load_dir=None, truncation_level=200, others_limit=None, epochs=15, mode
                     if found: break
             if not found:
                 print(f"Warning: No weights found in {target_load_dir}")
-    else:
         print("Starting training from scratch.")
+    
+    checkpoint_path = os.path.join(save_path, "checkpoint.pt")
+    start_epoch = 0
+    start_step = 0
+    
+    if load_dir and os.path.exists(checkpoint_path):
+        print(f"Loading checkpoint from {checkpoint_path}...")
+        checkpoint = torch.load(checkpoint_path, map_location=pm.device)
+        pm.model.load_state_dict(checkpoint['model_state_dict'])
+        start_epoch = checkpoint['epoch']
+        start_step = checkpoint['iteration']
+        print(f"Resuming from Epoch {start_epoch + 1}, Step {start_step}")
 
     # Enable Gradient Checkpointing for Longformer memory efficiency
     pm.model.gradient_checkpointing_enable()
@@ -169,10 +185,10 @@ def main(load_dir=None, truncation_level=200, others_limit=None, epochs=15, mode
     train_dataset = RadiologyDataset(train_df['text'].tolist(), train_df['labels'].tolist(), pm.tokenizer, max_length=2048)
     val_dataset = RadiologyDataset(val_df['text'].tolist(), val_df['labels'].tolist(), pm.tokenizer, max_length=2048)
     
-    train_loader = DataLoader(train_dataset, batch_size=2, shuffle=True, num_workers=4, pin_memory=True)
-    val_loader = DataLoader(val_dataset, batch_size=2, num_workers=4, pin_memory=True)
+    train_loader = DataLoader(train_dataset, batch_size=2, shuffle=True, num_workers=0, pin_memory=True)
+    val_loader = DataLoader(val_dataset, batch_size=2, num_workers=0, pin_memory=True)
 
-    optimizer = AdamW(pm.model.parameters(), lr=1e-5, weight_decay=0.001)
+    optimizer = AdamW(pm.model.parameters(), lr=1e-5, weight_decay=0.0001)
     if bnb: optimizer = bnb.optim.AdamW8bit(pm.model.parameters(), lr=1e-5)
     
     EPOCHS = epochs
@@ -185,9 +201,14 @@ def main(load_dir=None, truncation_level=200, others_limit=None, epochs=15, mode
     
     scaler = torch.cuda.amp.GradScaler()
 
+    if load_dir and os.path.exists(checkpoint_path):
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+        scaler.load_state_dict(checkpoint['scaler_state_dict'])
+
     # Training loop
     print("Starting Training...")
-    for epoch in range(EPOCHS):
+    for epoch in range(start_epoch, EPOCHS):
         print(f"Epoch {epoch + 1} / {EPOCHS}")
         
         pm.model.train()
@@ -195,6 +216,9 @@ def main(load_dir=None, truncation_level=200, others_limit=None, epochs=15, mode
         train_iterator = tqdm(train_loader, desc=f"Training Epoch {epoch+1}")
         
         for i, batch in enumerate(train_iterator):
+            # Skip steps if resuming
+            if epoch == start_epoch and i < start_step:
+                continue
             input_ids = batch['input_ids'].to(pm.device)
             attention_mask = batch['attention_mask'].to(pm.device)
             labels = batch['labels'].to(pm.device)
@@ -216,6 +240,23 @@ def main(load_dir=None, truncation_level=200, others_limit=None, epochs=15, mode
             
             train_iterator.set_postfix(loss=f"{(loss.item() * ACCUMULATION_STEPS):.4f}")
             total_train_loss += loss.item() * ACCUMULATION_STEPS
+            
+            # Periodic Mid-Epoch Checkpointing
+            if (i + 1) % 5000 == 0:
+                print(f"\nSaving Mid-Epoch Checkpoint at Step {i+1}...")
+                torch.save({
+                    'epoch': epoch,
+                    'iteration': i + 1,
+                    'model_state_dict': pm.model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'scheduler_state_dict': scheduler.state_dict(),
+                    'scaler_state_dict': scaler.state_dict(),
+                }, checkpoint_path)
+            
+            # Periodic Memory Cleanup
+            if (i + 1) % 500 == 0:
+                gc.collect()
+                torch.cuda.empty_cache()
             
         avg_train_loss = total_train_loss / len(train_loader)
         print(f"Average Training Loss: {avg_train_loss:.4f}")
