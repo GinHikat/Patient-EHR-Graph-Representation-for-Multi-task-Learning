@@ -259,3 +259,6 @@ def fit_and_build(patient_ids, output_dir=OUTPUT_DIR, batch_size=500,
 
     print('All done.')
     return scaler
+
+if __name__ == '__main__':
+    scaler_lab = fit_and_build(all_patient_ids)
