@@ -284,7 +284,7 @@ def main(load_dir=None, truncation_level=200, others_limit=None, epochs=15, mode
                 
         avg_val_loss = total_val_loss / len(val_loader)
 
-        EVAL_THRESHOLD = 0.7
+        EVAL_THRESHOLD = 0.5
         
         metrics = pm.compute_metrics((np.vstack(all_logits), np.vstack(all_labels)), threshold=EVAL_THRESHOLD)
         

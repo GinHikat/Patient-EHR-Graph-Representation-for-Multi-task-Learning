@@ -204,7 +204,8 @@ class ProcedureModel:
         best_f1 = 0
         best_threshold = 0.5
         
-        for t in np.arange(0.05, 0.55, 0.05):
+        # Expanded range to catch better thresholds for confident models
+        for t in np.arange(0.05, 0.95, 0.05):
             t_preds = (probs > t).astype(int)
             f1 = f1_score(labels, t_preds, average='micro', zero_division=0)
             if f1 > best_f1:
@@ -290,8 +291,8 @@ class PLMICD_Internal(nn.Module):
         self.hidden_size = self.encoder.config.hidden_size
         self.laat = LAATLayer(self.hidden_size, num_labels)
 
-    def forward(self, input_ids, attention_mask=None, **kwargs):
-        outputs = self.encoder(input_ids, attention_mask=attention_mask, **kwargs)
+    def forward(self, input_ids, attention_mask=None):
+        outputs = self.encoder(input_ids, attention_mask=attention_mask)
         H = outputs.last_hidden_state
         logits = self.laat(H)
         return SequenceClassifierOutput(logits=logits)
@@ -322,6 +323,106 @@ class PLMICDModel(ProcedureModel):
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         # Initialize the custom PLM-ICD architecture
         self.model = PLMICD_Internal(num_labels, model_name)
+        self.model.to(self.device)
+
+class MultiSynonymAttention(nn.Module):
+    """
+    Multi-Synonym Attention Layer (MSMN) as described in the paper.
+    Uses multiple queries (synonyms) per label and aggregates their document representations.
+    """
+    def __init__(self, hidden_size, num_labels, num_synonyms=3):
+        super().__init__()
+        self.num_labels = num_labels
+        self.num_synonyms = num_synonyms
+        self.hidden_size = hidden_size
+        
+        # Multiple queries per label representing synonyms [N, M, D]
+        self.Q = nn.Parameter(torch.zeros(num_labels, num_synonyms, hidden_size))
+        
+        # Biaffine weight matrix [D, D]
+        self.W = nn.Parameter(torch.zeros(hidden_size, hidden_size))
+        # Final bias
+        self.bias = nn.Parameter(torch.zeros(num_labels))
+        self._init_weights()
+
+    def _init_weights(self):
+        nn.init.xavier_uniform_(self.Q)
+        nn.init.xavier_uniform_(self.W)
+
+    def forward(self, H):
+        # H: [B, L, D]
+        B, L, D = H.shape
+        N = self.num_labels
+        M = self.num_synonyms
+        
+        # Flatten Q to treat each synonym as an independent query head
+        Q_flat = self.Q.view(-1, D) # [N*M, D]
+        
+        # Calculate attention scores for each synonym head: [B, L, N*M]
+        scores = torch.matmul(H, Q_flat.transpose(0, 1))
+        A = torch.softmax(scores, dim=1) # [B, L, N*M]
+        
+        # Synonym-specific document representations: [B, N*M, D]
+        V_all = torch.matmul(A.transpose(1, 2), H)
+        V_all = V_all.view(B, N, M, D)
+        
+        # Aggregation: Max-pooling across synonyms to capture the most relevant match
+        V, _ = torch.max(V_all, dim=2) # [B, N, D]
+        
+        # Aggregate synonym queries themselves (mean-pooling)
+        Q_agg = self.Q.mean(dim=1) # [N, D]
+        
+        # Biaffine Transformation: logit_n = v_n^T W q_n + b_n
+        # First compute V * W -> [B, N, D]
+        VW = torch.matmul(V, self.W)
+        # Then (VW) dot Q_agg + bias -> [B, N]
+        logits = (VW * Q_agg).sum(dim=-1) + self.bias
+        
+        return logits
+
+class MSMN_Internal(nn.Module):
+    """
+    Internal nn.Module for MSMN.
+    Combines a PLM encoder with a Multi-Synonym Attention head.
+    """
+    def __init__(self, num_labels, model_name="yikuan8/Clinical-Longformer", num_synonyms=3):
+        super().__init__()
+        self.encoder = AutoModel.from_pretrained(model_name)
+        self.hidden_size = self.encoder.config.hidden_size
+        self.msa = MultiSynonymAttention(self.hidden_size, num_labels, num_synonyms)
+
+    def forward(self, input_ids, attention_mask=None):
+        outputs = self.encoder(input_ids, attention_mask=attention_mask)
+        H = outputs.last_hidden_state
+        logits = self.msa(H)
+        return SequenceClassifierOutput(logits=logits)
+
+    def gradient_checkpointing_enable(self, **kwargs):
+        self.encoder.gradient_checkpointing_enable(**kwargs)
+
+    def gradient_checkpointing_disable(self):
+        self.encoder.gradient_checkpointing_disable()
+
+    def save_pretrained(self, save_directory):
+        self.encoder.save_pretrained(save_directory)
+        self.encoder.config.save_pretrained(save_directory)
+
+class MSMNModel(ProcedureModel):
+    """
+    MSMN Model wrapper compatible with ProcedureModel.
+    Uses Clinical-Longformer and Multi-Synonym Attention with Biaffine head.
+    """
+    def __init__(self, num_labels: int, model_name: str = "yikuan8/Clinical-Longformer", device: Optional[str] = None, num_synonyms: int = 3):
+        if device:
+            self.device = torch.device(device)
+        else:
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            
+        print(f"Using device: {self.device}")
+        
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        # Initialize the custom MSMN architecture
+        self.model = MSMN_Internal(num_labels, model_name, num_synonyms=num_synonyms)
         self.model.to(self.device)
 
 class NERModel:

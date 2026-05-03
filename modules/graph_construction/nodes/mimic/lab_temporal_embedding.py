@@ -124,10 +124,7 @@ def fit_scaler_streaming(patient_ids, save_path='lab_scaler.pkl'):
 
 def fit_and_build(patient_ids, output_dir=OUTPUT_DIR, batch_size=500,
                   save_path=SCALER_PATH, checkpoint_path=CHECKPOINT_PATH):
-    """
-    Pass 1: fit scaler + write raw panels (patient-separated)
-    Pass 2: normalize in place and drop admissions
-    """
+                  
     out = Path(output_dir)
     out.mkdir(exist_ok=True)
 
@@ -153,7 +150,8 @@ def fit_and_build(patient_ids, output_dir=OUTPUT_DIR, batch_size=500,
     # Pass 1: fit scaler + write raw panels
     if start_idx < len(patient_ids):
         batches = range(start_idx, len(patient_ids), batch_size)
-        for i in tqdm(batches, desc='Pass 1 — fit scaler', initial=start_idx // batch_size,
+        for i in tqdm(batches, desc='Pass 1 — fit scaler',
+                      initial=start_idx // batch_size,
                       total=len(patient_ids) // batch_size):
             batch = patient_ids[i:i+batch_size]
             panels = get_panels_for_batch(batch)
@@ -164,12 +162,15 @@ def fit_and_build(patient_ids, output_dir=OUTPUT_DIR, batch_size=500,
                 by_patient.setdefault(pid, []).append(panel)
 
             for pid, patient_panels in by_patient.items():
-                # Skip patients already written (in case of mid-batch crash)
-                if (out / f'{pid}.json').exists():
+                # Skip already written patients
+                if (out / f'{pid}_values.npy').exists():
                     continue
 
                 patient_panels.sort(key=lambda p: p.get('charttime', ''))
-                patient_data = {}
+
+                values_list = []
+                masks_list  = []
+                times_list  = []
 
                 for panel in patient_panels:
                     v, m, charttime = panel_to_vectors(panel)
@@ -178,20 +179,22 @@ def fit_and_build(patient_ids, output_dir=OUTPUT_DIR, batch_size=500,
                         skipped += 1
                         continue
 
+                    # Update Welford stats
                     for idx in np.where(m == 1.0)[0]:
                         count[idx] += 1
                         delta       = v[idx] - mean[idx]
                         mean[idx]  += delta / count[idx]
                         M2[idx]    += delta * (v[idx] - mean[idx])
 
-                    patient_data[str(charttime)] = {
-                        'values': v.tolist(),
-                        'mask':   m.tolist()
-                    }
+                    values_list.append(v)
+                    masks_list.append(m)
+                    times_list.append(str(charttime))
 
-                if patient_data:
-                    with open(out / f'{pid}.json', 'w') as f:
-                        json.dump(patient_data, f)
+                if values_list:
+                    np.save(out / f'{pid}_values.npy', np.stack(values_list).astype(np.float32))
+                    np.save(out / f'{pid}_masks.npy',  np.stack(masks_list).astype(np.float32))
+                    with open(out / f'{pid}_times.json', 'w') as f:
+                        json.dump(times_list, f)
 
             # Save checkpoint after every batch
             with open(checkpoint_path, 'wb') as f:
@@ -207,6 +210,7 @@ def fit_and_build(patient_ids, output_dir=OUTPUT_DIR, batch_size=500,
     else:
         print('Pass 1 already complete, skipping.')
 
+    # Finalize scaler 
     if Path(save_path).exists():
         print(f'Scaler already exists at {save_path}, loading.')
         with open(save_path, 'rb') as f:
@@ -224,41 +228,34 @@ def fit_and_build(patient_ids, output_dir=OUTPUT_DIR, batch_size=500,
         print(f'Scaler saved → {save_path}')
         print(f'Tests with < 100 observations: {int((count < 100).sum())}')
 
-    # Pass 2: normalize in place (skip already normalized files)
-    patient_files = list(out.glob('*.json'))
-    needs_norm    = []
-
-    for fpath in patient_files:
-        with open(fpath) as f:
-            data = json.load(f)
-        # Check first entry — if values are already normalized they'll be near [-3, 3]
-        # We use a sentinel key to track this cleanly instead
-        first = next(iter(data.values()))
-        if first.get('normalized', False) is False:
-            needs_norm.append(fpath)
+    # Pass 2: normalize in place
+    value_files  = list(out.glob('*_values.npy'))
+    needs_norm   = [f for f in value_files
+                    if not (out / f.name.replace('_values.npy', '_done')).exists()]
 
     print(f'Pass 2: {len(needs_norm)} files to normalize, '
-          f'{len(patient_files) - len(needs_norm)} already done.')
+          f'{len(value_files) - len(needs_norm)} already done.')
 
     for fpath in tqdm(needs_norm, desc='Pass 2 — normalizing'):
-        with open(fpath) as f:
-            patient_data = json.load(f)
+        pid_stem = fpath.name.replace('_values.npy', '')
 
-        for charttime, entry in patient_data.items():
-            v = np.array(entry['values'], dtype=np.float32)
-            m = np.array(entry['mask'],   dtype=np.float32)
-            norm_v = (v - scaler['mean']) / scaler['std']
-            norm_v = norm_v * m
-            entry['values']     = norm_v.tolist()
-            entry['normalized'] = True  # sentinel so we can skip on resume
+        values = np.load(fpath)                              # (T, 170)
+        masks  = np.load(out / f'{pid_stem}_masks.npy')     # (T, 170)
 
-        with open(fpath, 'w') as f:
-            json.dump(patient_data, f)
+        norm_values = (values - scaler['mean']) / scaler['std']
+        norm_values = norm_values * masks                    # zero out missing
 
-    # Clean up checkpoint once fully done
+        np.save(fpath, norm_values.astype(np.float32))      # overwrite in place
+
+        # Sentinel file to mark as done
+        (out / f'{pid_stem}_done').touch()
+
+    # Clean up checkpoints
     if Path(checkpoint_path).exists():
         Path(checkpoint_path).unlink()
-        print('Checkpoint cleared.')
+    # Clean up sentinel files
+    for f in out.glob('*_done'):
+        f.unlink()
 
     print('All done.')
     return scaler
