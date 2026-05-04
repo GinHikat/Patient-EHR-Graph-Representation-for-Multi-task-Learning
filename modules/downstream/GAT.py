@@ -6,6 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 import pandas as pd
+import argparse
 from pathlib import Path
 from torch.utils.data import Dataset, DataLoader
 from torch_geometric.nn import GATConv
@@ -22,17 +23,17 @@ SAPBERT_EMB_PATH = os.path.join(BASE_DIR, 'kg_nodes_embed.npy')
 EDGES_CSV_PATH   = os.path.join(BASE_DIR, 'kg_edges.csv')
 NODES_CSV_PATH   = os.path.join(BASE_DIR, 'kg_nodes.csv')
 SAVE_PATH        = 'kg_gat_pretrained.pt'
+LOG_FILE_PATH    = 'training_metrics_gat.txt'
 
 # Model Hyperparameters
 IN_DIM      = 768
 HIDDEN_DIM  = 256
-OUT_DIM     = 64
-HEADS       = 4
+OUT_DIM     = 128
+HEADS       = 8
 DROPOUT     = 0.1
 N_RELATIONS = 6
 
 # Training Hyperparameters
-EPOCHS     = 50
 LR         = 1e-3
 MARGIN     = 0.5
 BATCH_SIZE = 1024
@@ -100,6 +101,7 @@ def evaluate(model, x_full, edge_index_full, edge_type_full, eval_df, neg_idx_a,
     labels = [1] * len(pos_sims) + [0] * len(neg_sims)
     scores = pos_sims + neg_sims
     auroc = roc_auc_score(labels, scores)
+    neg_mean_sim = np.mean(neg_sims)
 
     # 3. Hits@10 (Accuracy among top candidates)
     hits = 0
@@ -112,7 +114,7 @@ def evaluate(model, x_full, edge_index_full, edge_type_full, eval_df, neg_idx_a,
             hits += 1
     hits_at_10 = hits / len(eval_df)
 
-    return results, auroc, hits_at_10
+    return results, auroc, hits_at_10, neg_mean_sim
 
 def sample_negatives(pos_edges, n_nodes, full_pos_set):
     negs = []
@@ -128,7 +130,7 @@ def sample_negatives(pos_edges, n_nodes, full_pos_set):
                 break
     return np.array(negs)
 
-def main():
+def main(load_checkpoint=False, epochs=50):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Device: {device}")
 
@@ -145,6 +147,9 @@ def main():
     split_idx = int(0.95 * len(edges_df))
     train_df = edges_df.iloc[:split_idx]
     test_df  = edges_df.iloc[split_idx:]
+
+    print(f"  Training edges: {len(train_df)}")
+    print(f"  Testing edges:  {len(test_df)}")
 
     # Prepare Evaluation Data
     eval_df = test_df.sample(n=min(1000, len(test_df)), random_state=42).copy()
@@ -166,6 +171,14 @@ def main():
     model = KG_GAT().to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
 
+    # Load Checkpoint if requested
+    if load_checkpoint:
+        if os.path.exists(SAVE_PATH):
+            print(f"Resuming from checkpoint: {SAVE_PATH}...")
+            model.load_state_dict(torch.load(SAVE_PATH, map_location=device))
+        else:
+            print(f"Warning: Checkpoint {SAVE_PATH} not found. Starting from scratch.")
+
     # Graph Tensors (Restricted to Training edges)
     x_full = torch.tensor(node_embeddings, dtype=torch.float32).to(device)
     edge_index_train = torch.tensor(train_df[['src_idx','dst_idx']].values.T, dtype=torch.long).to(device)
@@ -186,10 +199,10 @@ def main():
     best_loss = float('inf')
     history = []
 
-    for epoch in range(1, EPOCHS + 1):
+    for epoch in range(1, epochs + 1):
         model.train()
         total_loss = 0
-        for pos_batch, neg_batch in tqdm(dataloader, desc=f'Epoch {epoch}/{EPOCHS}', leave=False):
+        for pos_batch, neg_batch in tqdm(dataloader, desc=f'Epoch {epoch}/{epochs}', leave=False):
             optimizer.zero_grad()
             h = model(x_full, edge_index_train, edge_type_train)
             
@@ -204,9 +217,23 @@ def main():
         avg_loss = total_loss / len(dataloader)
 
         if epoch % 5 == 0 or epoch == 1:
-            rel_sims, auroc, hits10 = evaluate(model, x_full, edge_index_train, edge_type_train, eval_df, neg_idx_a, neg_idx_b)
-            history.append({'epoch': epoch, 'loss': avg_loss, 'auroc': auroc, 'hits@10': hits10, **rel_sims})
-            print(f"Epoch {epoch:3d} | loss={avg_loss:.4f} | AUROC={auroc:.3f} | Hits@10={hits10:.3f}")
+            rel_sims, auroc, hits10, neg_mean = evaluate(model, x_full, edge_index_train, edge_type_train, eval_df, neg_idx_a, neg_idx_b)
+            history_item = {'epoch': epoch, 'loss': avg_loss, 'auroc': auroc, 'hits@10': hits10, 'neg_mean': neg_mean, **rel_sims}
+            history.append(history_item)
+            
+            # Log to terminal
+            print(f"Epoch {epoch:3d} | loss={avg_loss:.4f} | AUROC={auroc:.3f} | Hits@10={hits10:.3f} | NEG_MEAN={neg_mean:.3f}")
+            
+            # Log to file
+            mode = "a" if (epoch > 1 or load_checkpoint) else "w"
+            with open(LOG_FILE_PATH, mode) as f:
+                if epoch == 1 and not load_checkpoint:
+                    f.write(f"Starting GAT Training at {pd.Timestamp.now()}\n")
+                    f.write("="*40 + "\n")
+                f.write(f"Epoch {epoch}/{epochs} | Loss: {avg_loss:.4f} | AUROC: {auroc:.3f} | Hits@10: {hits10:.3f} | NEG_MEAN: {neg_mean:.4f}\n")
+                for rel, sim in rel_sims.items():
+                    f.write(f"  {rel}: {sim:.4f}\n")
+                f.write("-" * 20 + "\n")
 
         if avg_loss < best_loss:
             best_loss = avg_loss
@@ -217,4 +244,9 @@ def main():
     print(pd.DataFrame(history).round(3).to_string(index=False))
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Fine-tune GAT model on Knowledge Graph")
+    parser.add_argument("--load_checkpoint", action="store_true", help="Load the existing checkpoint to resume training")
+    parser.add_argument("--epochs", type=int, default=50, help="Number of training epochs")
+    args = parser.parse_args()
+
+    main(load_checkpoint=args.load_checkpoint, epochs=args.epochs)
