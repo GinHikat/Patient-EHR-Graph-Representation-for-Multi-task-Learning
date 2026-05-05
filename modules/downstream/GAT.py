@@ -117,6 +117,38 @@ def sample_negatives(pos_edges, n_nodes, full_pos_set):
                 break
     return np.array(negs)
 
+def embed_load_from_pt():
+    '''
+    Use the trained GAT weight to calculate new node embeddings
+    '''
+    downstream_data_path = ''
+    ## Use the model .pt to calculate the new GAT embedding
+    node_embeddings = np.load(os.path.join(downstream_data_path, 'kg_nodes_embed.npy'))       # (N, 768)
+    edges_df        = pd.read_csv(os.path.join(downstream_data_path,'kg_edges.csv'))
+    all_nodes       = pd.read_csv(os.path.join(downstream_data_path,'kg_nodes.csv'), dtype={'id': str}, low_memory=False)
+
+    edges_df = edges_df.dropna(subset=['src_idx', 'dst_idx', 'rel_idx'])
+    edges_df[['src_idx', 'dst_idx', 'rel_idx']] = \
+        edges_df[['src_idx', 'dst_idx', 'rel_idx']].astype(int)
+
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    x          = torch.tensor(node_embeddings, dtype=torch.float32).to(device)
+    edge_index = torch.tensor(edges_df[['src_idx','dst_idx']].values.T, dtype=torch.long).to(device)
+    edge_type  = torch.tensor(edges_df['rel_idx'].values, dtype=torch.long).to(device)
+
+    model = KG_GAT().to(device)
+    model.load_state_dict(torch.load(os.path.join(downstream_data_path,'kg_gat_pretrained.pt'), map_location=device))
+    model.eval()
+
+    # One forward pass → final embeddings
+    with torch.no_grad():
+        kg_embeddings = model(x, edge_index, edge_type)   # (N, 64)
+        kg_embeddings = kg_embeddings.cpu().numpy().astype(np.float32)
+
+    np.save(os.path.join(downstream_data_path,'kg_nodes_embed_gat.npy'), kg_embeddings)
+    print(f'Saved → kg_gat_embeddings.npy  shape: {kg_embeddings.shape}')  # (263939, 64)
+
 def main(load_checkpoint=False, epochs=50):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Device: {device}")

@@ -4,23 +4,23 @@ from collections import defaultdict
 from tqdm import tqdm
 import re
 import json
-import torch
-import torch.nn as nn
-from sklearn.preprocessing import StandardScaler
 import pickle
 from pathlib import Path
 
 import sys, os
-project_root = os.path.abspath(os.path.join(os.getcwd(), ".."))
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../"))
 if project_root not in sys.path:
     sys.path.append(project_root)
+
+base_data_dir = os.path.join(project_root, 'data')
+downstream_data_path = os.path.join(base_data_dir, 'downstream')
 
 from shared_functions.global_functions import *
 
 data_dir = os.getenv('DATA_DIR')
 
 # Load all patient IDs for processing
-with open('patients.txt') as f:
+with open(os.path.join(downstream_data_path, 'patients.txt')) as f:
     all_patient_ids = [int(line.strip()) for line in f.readlines()]
 
 OMR_FIELDS = ['blood_pressure_systolic', 'blood_pressure_diastolic', 'Weight', 'BMI']
@@ -40,7 +40,10 @@ def omr_to_vectors(panel: dict):
         if val is None:
             continue
         try:
-            value_vec[i] = float(val)
+            fval = float(val)
+            if np.isnan(fval) or np.isinf(fval):  
+                continue
+            value_vec[i] = fval
             mask_vec[i]  = 1.0
         except (ValueError, TypeError):
             pass
@@ -61,10 +64,23 @@ def get_omr_for_batch(patient_ids: list[int]):
 
 def fit_and_build_omr(patient_ids, output_dir=OMR_OUTPUT_DIR, batch_size=500,
                       save_path=OMR_SCALER_PATH, checkpoint_path=OMR_CHECKPOINT):
+    """
+    Fit scaler using Welford's algorithm across multiple batches.
+    
+    Args:
+        patient_ids (list[int]): List of patient IDs to process.
+        output_dir (str): Directory to save computed OMR embeddings.
+        batch_size (int): Number of patients per batch.
+        save_path (str): Path to save the final scaler.
+        checkpoint_path (str): Path to save intermediate checkpoints.
+        
+    Returns:
+        dict: The computed scaler containing 'mean', 'std', and 'count'.
+    """
+    
     out = Path(output_dir)
     out.mkdir(exist_ok=True)
 
-    # Resume checkpoint
     if Path(checkpoint_path).exists():
         with open(checkpoint_path, 'rb') as f:
             ckpt = pickle.load(f)
@@ -83,7 +99,6 @@ def fit_and_build_omr(patient_ids, output_dir=OMR_OUTPUT_DIR, batch_size=500,
         skipped   = 0
         print('Starting fresh')
 
-    # Pass 1: fit scaler + write raw panels
     if start_idx < len(patient_ids):
         for i in tqdm(range(start_idx, len(patient_ids), batch_size),
                       desc='Pass 1 — OMR fit scaler',
@@ -111,8 +126,10 @@ def fit_and_build_omr(patient_ids, output_dir=OMR_OUTPUT_DIR, batch_size=500,
                         skipped += 1
                         continue
 
-                    # Welford update
+                    # ── Welford update with NaN guard ─────────────────────────
                     for idx in np.where(m == 1.0)[0]:
+                        if np.isnan(v[idx]) or np.isinf(v[idx]):  # ← guard
+                            continue
                         count[idx] += 1
                         delta       = v[idx] - mean[idx]
                         mean[idx]  += delta / count[idx]
@@ -131,8 +148,8 @@ def fit_and_build_omr(patient_ids, output_dir=OMR_OUTPUT_DIR, batch_size=500,
                     with open(out / f'{pid}_times.json', 'w') as f:
                         json.dump(times_list, f)
 
-            # Save checkpoint
-            with open(checkpoint_path, 'wb') as f:
+            tmp = checkpoint_path + '.tmp'
+            with open(tmp, 'wb') as f:
                 pickle.dump({
                     'count':          count,
                     'mean':           mean,
@@ -140,12 +157,12 @@ def fit_and_build_omr(patient_ids, output_dir=OMR_OUTPUT_DIR, batch_size=500,
                     'next_batch_idx': i + batch_size,
                     'skipped':        skipped
                 }, f)
+            os.replace(tmp, checkpoint_path)
 
         print(f'Pass 1 done. Skipped {skipped} panels.')
     else:
         print('Pass 1 already complete, skipping.')
 
-    # Finalize scaler
     if Path(save_path).exists():
         print(f'Scaler already exists at {save_path}, loading.')
         with open(save_path, 'rb') as f:
@@ -153,9 +170,15 @@ def fit_and_build_omr(patient_ids, output_dir=OMR_OUTPUT_DIR, batch_size=500,
     else:
         variance = np.where(count > 1, M2 / (count - 1), 1.0)
         stds     = np.where(np.sqrt(variance) > 0, np.sqrt(variance), 1.0)
-        scaler   = {
-            'mean':  mean.astype(np.float32),
-            'std':   stds.astype(np.float32),
+
+        # ── Final NaN/Inf guard on scaler stats ───────────────────────────────
+        means_clean = np.nan_to_num(mean, nan=0.0).astype(np.float32)
+        stds_clean  = np.nan_to_num(stds, nan=1.0, posinf=1.0).astype(np.float32)
+        stds_clean  = np.clip(stds_clean, 1e-6, 1e6)
+
+        scaler = {
+            'mean':  means_clean,
+            'std':   stds_clean,
             'count': count.astype(np.int64)
         }
         with open(save_path, 'wb') as f:
@@ -163,7 +186,6 @@ def fit_and_build_omr(patient_ids, output_dir=OMR_OUTPUT_DIR, batch_size=500,
         print(f'Scaler saved → {save_path}')
         print(f'Field counts: { {f: int(count[i]) for i, f in enumerate(OMR_FIELDS)} }')
 
-    # Pass 2: normalize in place
     npz_files  = list(out.glob('*.npz'))
     needs_norm = [f for f in npz_files
                   if not (out / f.name.replace('.npz', '_done')).exists()]
@@ -173,16 +195,16 @@ def fit_and_build_omr(patient_ids, output_dir=OMR_OUTPUT_DIR, batch_size=500,
 
     for fpath in tqdm(needs_norm, desc='Pass 2 — normalizing'):
         data   = np.load(fpath)
-        values = data['values']   # (T, 4)
-        masks  = data['masks']    # (T, 4)
+        values = data['values']
+        masks  = data['masks']
 
         norm_values = (values - scaler['mean']) / scaler['std']
+        norm_values = np.nan_to_num(norm_values, nan=0.0)  # ← final safety net
         norm_values = norm_values * masks
 
         np.savez_compressed(fpath, values=norm_values.astype(np.float32), masks=masks)
         (out / fpath.name.replace('.npz', '_done')).touch()
 
-    # Cleanup
     if Path(checkpoint_path).exists():
         Path(checkpoint_path).unlink()
     for f in out.glob('*_done'):
