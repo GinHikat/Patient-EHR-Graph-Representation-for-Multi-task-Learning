@@ -7,6 +7,7 @@ import torch.nn.functional as F
 import numpy as np
 import pandas as pd
 import argparse
+import gc
 from pathlib import Path
 from torch.utils.data import Dataset, DataLoader
 from torch_geometric.nn import GATConv
@@ -35,15 +36,15 @@ N_RELATIONS = 6
 
 # Training Hyperparameters
 LR         = 1e-3
-MARGIN     = 0.5
+MARGIN     = 0.9      # High margin to force higher similarity scores
 BATCH_SIZE = 1024
 
 class KG_GAT(nn.Module):
     def __init__(self, in_dim=IN_DIM, hidden_dim=HIDDEN_DIM, out_dim=OUT_DIM,
-                 heads=HEADS, dropout=DROPOUT, n_relations=N_RELATIONS):
+                 heads=HEADS, dropout=DROPOUT, n_relations=N_RELATIONS, rel_dim=64):
         super().__init__()
-        self.edge_type_emb = nn.Embedding(n_relations, in_dim)
-        self.conv1  = GATConv(in_dim, hidden_dim // heads, heads=heads, dropout=dropout)
+        self.rel_emb = nn.Embedding(n_relations, rel_dim)
+        self.conv1  = GATConv(in_dim, hidden_dim // heads, heads=heads, dropout=dropout, edge_dim=rel_dim)
         self.conv2  = GATConv(hidden_dim, out_dim, heads=1, dropout=dropout)
         self.norm1  = nn.LayerNorm(hidden_dim)
         self.norm2  = nn.LayerNorm(out_dim)
@@ -51,11 +52,8 @@ class KG_GAT(nn.Module):
         self.act    = nn.ELU()
 
     def forward(self, x, edge_index, edge_type):
-        edge_feat = self.edge_type_emb(edge_type)
-        x_mod = x.clone()
-        x_mod[edge_index[0]] = x[edge_index[0]] + edge_feat
-
-        h = self.conv1(x_mod, edge_index)
+        rel_feat = self.rel_emb(edge_type)
+        h = self.conv1(x, edge_index, edge_attr=rel_feat)
         h = self.norm1(h)
         h = self.act(h)
         h = self.drop(h)
@@ -90,7 +88,7 @@ def evaluate(model, x_full, edge_index_full, edge_type_full, eval_df, neg_idx_a,
             sims.append(sim)
         results[rel] = np.mean(sims)
 
-    # 2. AUROC (Real vs Random)
+    # 2. AUROC (Real vs Random) and Neg Mean
     pos_sims, neg_sims = [], []
     for _, row in eval_df.iterrows():
         idx_a, idx_b = row['idx_pair']
@@ -103,18 +101,7 @@ def evaluate(model, x_full, edge_index_full, edge_type_full, eval_df, neg_idx_a,
     auroc = roc_auc_score(labels, scores)
     neg_mean_sim = np.mean(neg_sims)
 
-    # 3. Hits@10 (Accuracy among top candidates)
-    hits = 0
-    for _, row in eval_df.iterrows():
-        idx_a, idx_b = row['idx_pair']
-        sims = cosine_similarity(h[idx_a:idx_a+1], h)[0]
-        sims[idx_a] = -1 # exclude self
-        top10 = np.argsort(sims)[::-1][:10]
-        if idx_b in top10:
-            hits += 1
-    hits_at_10 = hits / len(eval_df)
-
-    return results, auroc, hits_at_10, neg_mean_sim
+    return results, auroc, neg_mean_sim
 
 def sample_negatives(pos_edges, n_nodes, full_pos_set):
     negs = []
@@ -148,9 +135,6 @@ def main(load_checkpoint=False, epochs=50):
     train_df = edges_df.iloc[:split_idx]
     test_df  = edges_df.iloc[split_idx:]
 
-    print(f"  Training edges: {len(train_df)}")
-    print(f"  Testing edges:  {len(test_df)}")
-
     # Prepare Evaluation Data
     eval_df = test_df.sample(n=min(1000, len(test_df)), random_state=42).copy()
     eval_df['idx_pair'] = eval_df.apply(lambda r: (int(r['src_idx']), int(r['dst_idx'])), axis=1)
@@ -170,6 +154,7 @@ def main(load_checkpoint=False, epochs=50):
     # Model Setup
     model = KG_GAT().to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=3)
 
     # Load Checkpoint if requested
     if load_checkpoint:
@@ -179,7 +164,7 @@ def main(load_checkpoint=False, epochs=50):
         else:
             print(f"Warning: Checkpoint {SAVE_PATH} not found. Starting from scratch.")
 
-    # Graph Tensors (Restricted to Training edges)
+    # Graph Tensors
     x_full = torch.tensor(node_embeddings, dtype=torch.float32).to(device)
     edge_index_train = torch.tensor(train_df[['src_idx','dst_idx']].values.T, dtype=torch.long).to(device)
     edge_type_train = torch.tensor(train_df['rel_idx'].values, dtype=torch.long).to(device)
@@ -198,39 +183,47 @@ def main(load_checkpoint=False, epochs=50):
     print("Starting fine-tuning...")
     best_loss = float('inf')
     history = []
+    scaler = torch.cuda.amp.GradScaler()
 
     for epoch in range(1, epochs + 1):
         model.train()
         total_loss = 0
-        for pos_batch, neg_batch in tqdm(dataloader, desc=f'Epoch {epoch}/{epochs}', leave=False):
+        for i, (pos_batch, neg_batch) in enumerate(tqdm(dataloader, desc=f'Epoch {epoch}/{epochs}', leave=False)):
+            pos_batch, neg_batch = pos_batch.to(device, non_blocking=True), neg_batch.to(device, non_blocking=True)
             optimizer.zero_grad()
-            h = model(x_full, edge_index_train, edge_type_train)
             
-            pos_sim = F.cosine_similarity(h[pos_batch[:, 0]], h[pos_batch[:, 1]])
-            neg_sim = F.cosine_similarity(h[neg_batch[:, 0]], h[neg_batch[:, 1]])
+            with torch.cuda.amp.autocast():
+                h = model(x_full, edge_index_train, edge_type_train)
+                pos_sim = F.cosine_similarity(h[pos_batch[:, 0]], h[pos_batch[:, 1]])
+                neg_sim = F.cosine_similarity(h[neg_batch[:, 0]], h[neg_batch[:, 1]])
+                loss = F.relu(MARGIN - pos_sim + neg_sim).mean()
             
-            loss = F.relu(MARGIN - pos_sim + neg_sim).mean()
-            loss.backward()
-            optimizer.step()
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
             total_loss += loss.item()
+            
+            if (i + 1) % 500 == 0:
+                gc.collect()
+                torch.cuda.empty_cache()
 
         avg_loss = total_loss / len(dataloader)
+        scheduler.step(avg_loss)
+        current_lr = optimizer.param_groups[0]['lr']
 
         if epoch % 5 == 0 or epoch == 1:
-            rel_sims, auroc, hits10, neg_mean = evaluate(model, x_full, edge_index_train, edge_type_train, eval_df, neg_idx_a, neg_idx_b)
-            history_item = {'epoch': epoch, 'loss': avg_loss, 'auroc': auroc, 'hits@10': hits10, 'neg_mean': neg_mean, **rel_sims}
+            rel_sims, auroc, neg_mean = evaluate(model, x_full, edge_index_train, edge_type_train, eval_df, neg_idx_a, neg_idx_b)
+            history_item = {'epoch': epoch, 'loss': avg_loss, 'auroc': auroc, 'neg_mean': neg_mean, **rel_sims}
             history.append(history_item)
             
-            # Log to terminal
-            print(f"Epoch {epoch:3d} | loss={avg_loss:.4f} | AUROC={auroc:.3f} | Hits@10={hits10:.3f} | NEG_MEAN={neg_mean:.3f}")
+            print(f"Epoch {epoch:3d} | lr={current_lr:.6f} | loss={avg_loss:.4f} | AUROC={auroc:.3f} | NEG_MEAN={neg_mean:.3f}")
             
-            # Log to file
             mode = "a" if (epoch > 1 or load_checkpoint) else "w"
             with open(LOG_FILE_PATH, mode) as f:
                 if epoch == 1 and not load_checkpoint:
                     f.write(f"Starting GAT Training at {pd.Timestamp.now()}\n")
                     f.write("="*40 + "\n")
-                f.write(f"Epoch {epoch}/{epochs} | Loss: {avg_loss:.4f} | AUROC: {auroc:.3f} | Hits@10: {hits10:.3f} | NEG_MEAN: {neg_mean:.4f}\n")
+                f.write(f"Epoch {epoch}/{epochs} | LR: {current_lr:.6f} | Loss: {avg_loss:.4f} | AUROC: {auroc:.3f} | NEG_MEAN: {neg_mean:.3f}\n")
                 for rel, sim in rel_sims.items():
                     f.write(f"  {rel}: {sim:.4f}\n")
                 f.write("-" * 20 + "\n")
@@ -239,14 +232,11 @@ def main(load_checkpoint=False, epochs=50):
             best_loss = avg_loss
             torch.save(model.state_dict(), SAVE_PATH)
 
-    # Summary
-    print("\nTraining complete. History summary:")
-    print(pd.DataFrame(history).round(3).to_string(index=False))
+    print("\nTraining complete. Summary saved to history.")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Fine-tune GAT model on Knowledge Graph")
-    parser.add_argument("--load_checkpoint", action="store_true", help="Load the existing checkpoint to resume training")
-    parser.add_argument("--epochs", type=int, default=50, help="Number of training epochs")
+    parser.add_argument("--load_checkpoint", action="store_true", help="Load existing checkpoint")
+    parser.add_argument("--epochs", type=int, default=50, help="Number of epochs")
     args = parser.parse_args()
-
     main(load_checkpoint=args.load_checkpoint, epochs=args.epochs)

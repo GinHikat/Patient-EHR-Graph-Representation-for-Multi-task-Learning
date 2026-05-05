@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 from tqdm import tqdm
+import json
 
 import sys, os
 project_root = os.path.abspath(os.path.join(os.getcwd(), ".."))
@@ -105,3 +106,44 @@ def extract_nodes_edges():
 
     edges_df.to_csv('kg_edges.csv', index=False)
 
+def extract_admission_nodes():
+    '''
+    Extract all Drugs and Diagnosis connected to each Admission and save to a json file
+    '''
+    def get_all_admission_nodes(batch_size=500) -> dict:
+        # Get all admission IDs
+        admission_ids = [
+            row['admission_id'] for row in query_neo4j(
+                'MATCH (a:Admission) RETURN a.id AS admission_id'
+            )
+        ]
+        print(f'Total admissions: {len(admission_ids)}')
+
+        all_data = {}
+        for i in tqdm(range(0, len(admission_ids), batch_size), desc='Querying admissions'):
+            batch  = admission_ids[i:i+batch_size]
+            result = query_neo4j('''
+                MATCH (a:Admission)
+                WHERE a.id IN $admission_ids
+                OPTIONAL MATCH (a)-[:HAS_DIAGNOSIS]->(d:Diagnosis)
+                OPTIONAL MATCH (a)-[:PRESCRIBED]->(dr:Drug)
+                RETURN
+                    a.id                      AS admission_id,
+                    collect(DISTINCT d.name)  AS diagnoses,
+                    collect(DISTINCT dr.name) AS drugs
+            ''', admission_ids=batch)
+
+            for row in result:
+                all_data[row['admission_id']] = {
+                    'diagnoses': [n for n in row['diagnoses'] if n],
+                    'drugs':     [n for n in row['drugs']     if n]
+                }
+
+        return all_data
+
+
+    admission_nodes = get_all_admission_nodes()
+
+    with open('admission_nodes.json', 'w') as f:
+        json.dump(admission_nodes, f)
+    print('Saved → admission_nodes.json')

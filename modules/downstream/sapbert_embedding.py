@@ -62,7 +62,6 @@ def encode_nodes_with_checkpoint(df, embedder, batch_size=SAPBERT_BATCH_SIZE,
 
     return result
 
-
 node_embeddings = encode_nodes_with_checkpoint(all_nodes, embedder)
 print(f'Done. Shape: {node_embeddings.shape}')  # (N, 768)
 
