@@ -16,12 +16,20 @@ data_dir = os.getenv('DATA_DIR')
 base_data_dir = os.path.join(project_root, 'data')
 downstream_data_path = os.path.join(base_data_dir, 'downstream')
 
-DEFAULT_VOCAB_SIZES = {
+PATIENT_VOCAB = {
     "gender":         2,
     "insurance":      5,
     "marital_status": 5,
     "race":          30,
     "language":      25,
+}
+
+ADMISSION_VOCAB = {
+    "admission_type":     9,
+    "admission_location": 11,
+    "drg_type":           2,
+    "drg_severity":       4,   # ordinal 1-4, embedded not scalar
+    "drg_mortality":      4,   # ordinal 1-4, embedded not scalar
 }
  
 EMBED_DIM  = 8    # per categorical field
@@ -33,7 +41,7 @@ class PatientStaticEncoder(nn.Module):
     Encodes static patient demographics into a 64-dim vector.
  
     Args:
-        vocab_sizes (dict): field → n_unique. Defaults to DEFAULT_VOCAB_SIZES.
+        vocab_sizes (dict): field → n_unique. Defaults to PATIENT_VOCAB.
         dropout (float):    applied in projection MLP.
  
     Forward inputs:
@@ -48,7 +56,7 @@ class PatientStaticEncoder(nn.Module):
         super().__init__()
  
         if vocab_sizes is None:
-            vocab_sizes = DEFAULT_VOCAB_SIZES
+            vocab_sizes = PATIENT_VOCAB
  
         self.fields = list(vocab_sizes.keys())
  
@@ -82,6 +90,63 @@ class PatientStaticEncoder(nn.Module):
  
         return self.proj(x)    # (B, 64)
 
+class AdmissionStaticEncoder(nn.Module):
+    """
+    Encodes static admission features into a 64-dim vector.
+ 
+    Args:
+        vocab_sizes (dict): field → n_unique. Defaults to ADMISSION_VOCAB.
+        dropout (float):    applied in projection MLP.
+ 
+    Forward inputs:
+        cat_inputs (dict[str, LongTensor]): {field: (B,)} index tensors
+                                            drg_severity/mortality passed as
+                                            raw int values (1-4), shifted to
+                                            0-based index inside forward.
+ 
+    Forward output:
+        (B, 64)
+    """
+ 
+    def __init__(self, vocab_sizes: dict = None, dropout: float = 0.1):
+        super().__init__()
+ 
+        if vocab_sizes is None:
+            vocab_sizes = ADMISSION_VOCAB
+ 
+        self.fields = list(vocab_sizes.keys())
+ 
+        # Ordinal fields (drg_severity, drg_mortality) are 1-indexed in data
+        # We handle the shift in encode_admission_row, so +1 here for UNK=0
+        self.embeddings = nn.ModuleDict({
+            field: nn.Embedding(vocab_sizes[field] + 1, EMBED_DIM, padding_idx=0)
+            for field in self.fields
+        })
+ 
+        total_dim = len(self.fields) * EMBED_DIM   # 5 × 8 = 40
+ 
+        self.proj = nn.Sequential(
+            nn.Linear(total_dim, 128),
+            nn.LayerNorm(128),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(128, OUTPUT_DIM),
+        )
+ 
+    def forward(self, cat_inputs: dict) -> torch.Tensor:
+        """
+        Args:
+            cat_inputs: {field: LongTensor (B,)}
+                        all indices already 1-based (0 = UNK)
+        Returns:
+            (B, 64)
+        """
+        embedded = [self.embeddings[f](cat_inputs[f]) for f in self.fields]
+        x = torch.cat(embedded, dim=-1)   # (B, 40)
+        return self.proj(x)               # (B, 64)
+
+## Helper Functions
+
 def build_category_maps(df, fields=None):
     """
     Build index maps from a DataFrame of patient records.
@@ -95,7 +160,7 @@ def build_category_maps(df, fields=None):
         encoder = PatientStaticEncoder(vocab_sizes=sizes)
     """
     if fields is None:
-        fields = list(DEFAULT_VOCAB_SIZES.keys())
+        fields = list(PATIENT_VOCAB.keys())
  
     maps, sizes = {}, {}
     for field in fields:
@@ -104,7 +169,29 @@ def build_category_maps(df, fields=None):
         sizes[field] = len(unique_vals)
  
     return maps, sizes
-  
+
+def build_admission_category_maps(df, fields=None):
+    """
+    Build index maps from a DataFrame of admission records.
+    drg_severity and drg_mortality are integer 1-4 — mapped as strings
+    so UNK handling is consistent.
+ 
+    Returns:
+        maps  : {field: {value_str → int (1-based, 0=UNK)}}
+        sizes : {field: n_unique}
+    """
+    if fields is None:
+        fields = ["admission_type", "admission_location", "drg_type",
+                  "drg_severity", "drg_mortality"]
+ 
+    maps, sizes = {}, {}
+    for field in fields:
+        unique_vals  = sorted(df[field].dropna().astype(str).unique())
+        maps[field]  = {v: i + 1 for i, v in enumerate(unique_vals)}
+        sizes[field] = len(unique_vals)
+ 
+    return maps, sizes
+
 def encode_patient_row(row, cat_maps, age_mean, age_std):
     """
     Convert one patient dict into model-ready tensors.
@@ -129,7 +216,26 @@ def encode_patient_row(row, cat_maps, age_mean, age_std):
     scalar_tensor = torch.tensor([[age_norm]], dtype=torch.float32)
  
     return cat_tensors, scalar_tensor
+
+def encode_admission_row(row, cat_maps):
+    """
+    Convert one admission dict into model-ready tensors.
  
+    Args:
+        row      : dict with admission fields (from admission_nodes.json
+                   or a Neo4j query result)
+        cat_maps : output of build_admission_category_maps
+ 
+    Returns:
+        cat_tensors: {field: LongTensor (1,)}
+    """
+    cat_tensors = {}
+    for field, mapping in cat_maps.items():
+        val = str(row.get(field, ""))
+        cat_tensors[field] = torch.tensor([mapping.get(val, 0)], dtype=torch.long)
+ 
+    return cat_tensors
+
 def precompute_all_patient_vectors(patients_df, encoder, cat_maps, age_mean, age_std, device):
     """
     Precompute and cache 64-dim vectors for all patients.
@@ -149,37 +255,23 @@ def precompute_all_patient_vectors(patients_df, encoder, cat_maps, age_mean, age
             cache[pid] = encoder(cat_t, scalar_t).squeeze(0)   # (64,)
     return cache
 
+def precompute_all_admission_vectors(admissions_df, encoder, cat_maps, device):
+    """
+    Precompute and cache 64-dim vectors for all admissions.
+    Call once before training — look up by adm_id at DISCHARGE slice time.
+ 
+    Returns:
+        dict {adm_id (str): Tensor (64,)}
+    """
+    encoder.eval()
+    cache = {}
+    with torch.no_grad():
+        for _, row in admissions_df.iterrows():
+            adm_id = str(row["id"])
+            cat_t  = encode_admission_row(row, cat_maps)
+            cat_t  = {f: v.to(device) for f, v in cat_t.items()}
+            cache[adm_id] = encoder(cat_t).squeeze(0)   # (64,)
+    return cache
+
 # if __name__ == "__main__":
  
-#     fake = pd.DataFrame({
-#         "id":             ["p1", "p2", "p3"],
-#         "gender":         ["M", "F", "M"],
-#         "insurance":      ["Medicare", "Medicaid", "Other"],
-#         "marital_status": ["MARRIED", "SINGLE", "DIVORCED"],
-#         "race":           ["WHITE", "BLACK", "ASIAN"],
-#         "language":       ["ENGLISH", "SPANISH", "OTHER"],
-#         "age":            [65.0, 45.0, 72.0],
-#     })
- 
-#     cat_maps, vocab_sizes = build_category_maps(fake)
-#     print("Vocab sizes:", vocab_sizes)
- 
-#     age_mean = fake["age"].mean()
-#     age_std  = fake["age"].std()
- 
-#     encoder = PatientStaticEncoder(vocab_sizes=vocab_sizes)
-#     print(f"Parameters: {sum(p.numel() for p in encoder.parameters()):,}")
- 
-#     row   = fake.iloc[0].to_dict()
-#     cat_t, scalar_t = encode_patient_row(row, cat_maps, age_mean, age_std)
-#     out   = encoder(cat_t, scalar_t)
-#     print("Output shape:", out.shape)   # → (1, 64)
-#     assert out.shape == (1, 64)
- 
-#     # Test precompute cache
-#     cache = precompute_all_patient_vectors(
-#         fake, encoder, cat_maps, age_mean, age_std, torch.device("cpu")
-#     )
-#     print("Cache keys:", list(cache.keys()))
-#     print("Cached vector shape:", cache["p1"].shape)  # → (64,)
-#     print("PatientStaticEncoder OK ✓")

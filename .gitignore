@@ -8,6 +8,8 @@ secrets/
 
 *.pyc
 
+*.pkl
+
 plan/
 
 notebooks/*
@@ -21,6 +23,8 @@ modules/models/.models/*
 Clinical-Note-Extraction/
 
 .gitnexus
+
+Note/
 
 AGENTS.md
 CLAUDE.md
