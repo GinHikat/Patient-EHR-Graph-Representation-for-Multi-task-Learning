@@ -329,30 +329,9 @@ if __name__ == '__main__':
     special_encoder   = SpecialTokenEncoder()
     admission_encoder = AdmissionEncoder()
 
-    # Test sample
-    embeddings, times, meta = build_patient_timeline(
-        SAMPLE_PID,
-        admission_nodes,
-        kg_embeddings,
-        name_to_idx,
-        lab_encoder,
-        omr_encoder,
-        special_encoder,
-        admission_encoder
-    )
-
-    delta_t = compute_delta_t(times)
-
-    print(f'Timeline length: {len(times)} events')
-    print(f'Embeddings shape: {embeddings.shape}')     # (T, 128)
-    print(f'Delta_t shape:    {delta_t.shape}')        # (T,)
-    print(f'\nFirst 10 events:')
-    for i in range(len(times)):
-        print(f'  {times[i].strftime("%Y-%m-%d %H:%M")}  [{meta[i]["type"]:<15}]  Δt={delta_t[i]:.1f}d')
-
-    #Build and save timeline for all Patient
-    # build_and_save_all_timelines(
-    #     all_patient_ids,
+    # # Test sample
+    # embeddings, times, meta = build_patient_timeline(
+    #     SAMPLE_PID,
     #     admission_nodes,
     #     kg_embeddings,
     #     name_to_idx,
@@ -361,3 +340,24 @@ if __name__ == '__main__':
     #     special_encoder,
     #     admission_encoder
     # )
+
+    # delta_t = compute_delta_t(times)
+
+    # print(f'Timeline length: {len(times)} events')
+    # print(f'Embeddings shape: {embeddings.shape}')     # (T, 128)
+    # print(f'Delta_t shape:    {delta_t.shape}')        # (T,)
+    # print(f'\nFirst 10 events:')
+    # for i in range(len(times)):
+    #     print(f'  {times[i].strftime("%Y-%m-%d %H:%M")}  [{meta[i]["type"]:<15}]  Δt={delta_t[i]:.1f}d')
+
+    # Build and save timeline for all Patient
+    build_and_save_all_timelines(
+        all_patient_ids,
+        admission_nodes,
+        kg_embeddings,
+        name_to_idx,
+        lab_encoder,
+        omr_encoder,
+        special_encoder,
+        admission_encoder
+    )

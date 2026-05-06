@@ -264,18 +264,22 @@ class LAATLayer(nn.Module):
         # H: Document hidden states [batch_size, seq_len, hidden_size]
         # U: Label query vectors [num_labels, hidden_size]
         
-        # Calculate attention scores: [B, L, N]
-        # Score_ln = h_l^T u_n
-        scores = torch.matmul(H, self.U.transpose(0, 1))
+        # Prepare Query (U) for SDPA: [B, N, D]
+        # We treat labels as queries and document states as keys/values
+        Q = self.U.unsqueeze(0).expand(H.size(0), -1, -1)
         
-        # Softmax over sequence length L to get importance of each word for each label
-        A = torch.softmax(scores, dim=1) # [B, L, N]
-        
-        # Label-specific document representation V = A^T H -> [B, N, D]
-        V = torch.matmul(A.transpose(1, 2), H)
+        # Use SDPA for optimized attention computation.
+        # scale=1.0 is used to match the original implementation's non-scaled dot product.
+        # This will automatically use FlashAttention or memory-efficient kernels.
+        V = torch.nn.functional.scaled_dot_product_attention(
+            Q, H, H, 
+            attn_mask=None, 
+            dropout_p=0.0, 
+            is_causal=False, 
+            scale=1.0
+        )
         
         # Final classification logit_n = v_n^T w_n + b_n
-        # This is equivalent to element-wise multiplication and summing over the hidden dimension
         logits = (V * self.W).sum(dim=-1) + self.bias # [B, N]
         
         return logits
@@ -355,16 +359,20 @@ class MultiSynonymAttention(nn.Module):
         N = self.num_labels
         M = self.num_synonyms
         
-        # Flatten Q to treat each synonym as an independent query head
-        Q_flat = self.Q.view(-1, D) # [N*M, D]
+        # Flatten Q to treat each synonym as an independent query head: [B, N*M, D]
+        Q_flat = self.Q.view(1, N * M, D).expand(B, -1, -1)
         
-        # Calculate attention scores for each synonym head: [B, L, N*M]
-        scores = torch.matmul(H, Q_flat.transpose(0, 1))
-        A = torch.softmax(scores, dim=1) # [B, L, N*M]
+        # Optimized computation using SDPA
+        # This replaces manual scores calculation and softmax
+        V_all_flat = torch.nn.functional.scaled_dot_product_attention(
+            Q_flat, H, H,
+            attn_mask=None,
+            dropout_p=0.0,
+            is_causal=False,
+            scale=1.0
+        ) # [B, N*M, D]
         
-        # Synonym-specific document representations: [B, N*M, D]
-        V_all = torch.matmul(A.transpose(1, 2), H)
-        V_all = V_all.view(B, N, M, D)
+        V_all = V_all_flat.view(B, N, M, D)
         
         # Aggregation: Max-pooling across synonyms to capture the most relevant match
         V, _ = torch.max(V_all, dim=2) # [B, N, D]

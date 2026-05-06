@@ -324,8 +324,8 @@ def normalize_all(scaler, patient_ids, output_dir=OUTPUT_DIR):
 if __name__ == '__main__':
 
     train_pids = np.loadtxt(os.path.join(downstream_data_path, 'models', 'split_train_pids.txt'), dtype=int).tolist()
-    val_pids   = np.loadtxt(os.path.join(downstream_data_path, 'models','split_val_pids.txt'),   dtype=int).tolist()
-    test_pids  = np.loadtxt(os.path.join(downstream_data_path, 'models','split_test_pids.txt'),  dtype=int).tolist()
+    val_pids   = np.loadtxt(os.path.join(downstream_data_path, 'models', 'split_val_pids.txt'),   dtype=int).tolist()
+    test_pids  = np.loadtxt(os.path.join(downstream_data_path, 'models', 'split_test_pids.txt'),  dtype=int).tolist()
     all_pids   = train_pids + val_pids + test_pids
 
     # fit scaler on train only + write train raw files
