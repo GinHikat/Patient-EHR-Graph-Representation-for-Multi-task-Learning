@@ -1,5 +1,7 @@
 *.pt filter=lfs diff=lfs merge=lfs -text
 *.npy filter=lfs diff=lfs merge=lfs -text
 *.parquet filter=lfs diff=lfs merge=lfs -text
-*.json filter=lfs diff=lfs merge=lfs -text
-*.csv filter=lfs diff=lfs merge=lfs -text
+# Only track large data files in LFS, not code or config files like package.json
+data/**/*.json filter=lfs diff=lfs merge=lfs -text
+data/**/*.csv filter=lfs diff=lfs merge=lfs -text
+data/**/*.npy filter=lfs diff=lfs merge=lfs -text
