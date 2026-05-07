@@ -47,7 +47,7 @@ lengths       = []
 missing       = []
 event_types   = {}   # count by event type across all patients
 
-for pid in tqdm(all_pids[:20000], desc="Reading timelines"):
+for pid in tqdm(all_pids, desc="Reading timelines"):
     meta_path = Path(TIMELINE_DIR) / f"{pid}_meta.json"
     if not meta_path.exists():
         missing.append(pid)

@@ -13,26 +13,24 @@ from dotenv import load_dotenv
 load_dotenv()
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.abspath(os.path.join(current_dir, "../../"))
+project_root = os.path.abspath(os.path.join(current_dir, "../../../"))
 if project_root not in sys.path:
     sys.path.append(project_root)
 
 if current_dir not in sys.path:
     sys.path.append(current_dir)
 
-from shared_functions.global_functions import *
+# from shared_functions.global_functions import *
 
-data_dir = os.getenv('DATA_DIR')
 base_data_dir = os.path.join(project_root, 'data')
-downstream_data_path = os.path.join(base_data_dir, 'downstream')
+base_data_path = os.path.join(base_data_dir, 'Timeline')
 
 N_DIAGNOSES = 200   # top-200 diagnosis 
 
 pos_weight_mortality   = torch.tensor([63.93])   
 pos_weight_los         = torch.tensor([4.39])    
 pos_weight_readmission = torch.tensor([2.88])    
-pos_weight_progression = torch.from_numpy(np.load(os.path.join(downstream_data_path, 'progression_pos_weights.npy'))).float()  # 200-dim
-
+pos_weight_progression = torch.from_numpy(np.load(os.path.join(base_data_path, 'progression_pos_weights.npy'))).float()  # 200-dim
 
 class EHRDataset(Dataset):
     """
@@ -70,8 +68,9 @@ class EHRDataset(Dataset):
         df['patient_id'] = df['patient_id'].astype(str)
         self.df = df.reset_index(drop=True)
 
-        # Cache meta per patient to avoid reloading for each admission
-        self._meta_cache = {}
+        self._meta_cache   = {}  # Cache meta per patient
+        self._cache_keys   = []  # Track keys for FIFO eviction
+        self.MAX_CACHE     = 5000 # Cap cache at 5,000 patients
 
     def __len__(self):
         return len(self.df)
@@ -84,8 +83,17 @@ class EHRDataset(Dataset):
         # Load timeline (cache meta per patient)
         if pid not in self._meta_cache:
             meta_path = self.timeline_dir / f'{pid}_meta.json'
+            if not meta_path.exists():
+                # print(f"Warning: Missing meta file for patient {pid}")
+                return None
             with open(meta_path) as f:
                 self._meta_cache[pid] = json.load(f)
+                self._cache_keys.append(pid)
+            
+            # Evict oldest if cache too large
+            if len(self._cache_keys) > self.MAX_CACHE:
+                oldest = self._cache_keys.pop(0)
+                self._meta_cache.pop(oldest, None)
 
         meta = self._meta_cache[pid]
 
@@ -105,18 +113,36 @@ class EHRDataset(Dataset):
         emb_path = self.timeline_dir / f'{pid}_emb.npy'
         dt_path  = self.timeline_dir / f'{pid}_dt.npy'
 
+        if not emb_path.exists() or not dt_path.exists():
+            return None
+
         emb = np.load(emb_path)   # (T_full, 128)
         dt  = np.load(dt_path)    # (T_full,)
+
+        # Safety check: skip if embeddings contain NaNs
+        if np.isnan(emb).any():
+            return None
 
         # Slice up to and including DISCHARGE token — causal
         emb = emb[:discharge_pos + 1]   # (T_adm, 128)
         dt  = dt[:discharge_pos + 1]    # (T_adm,)
 
         # Static vectors from precomputed cache
-        patient_vec   = self.patient_cache.get(pid)
+        # Try both string and int keys to avoid type mismatch
+        patient_vec = self.patient_cache.get(pid)
+        if patient_vec is None and pid.isdigit():
+            patient_vec = self.patient_cache.get(int(pid))
+            
         admission_vec = self.admission_cache.get(adm_id)
+        if admission_vec is None and adm_id.isdigit():
+            admission_vec = self.admission_cache.get(int(adm_id))
 
         if patient_vec is None or admission_vec is None:
+            # print(f"Warning: Missing cache entry for patient {pid} or admission {adm_id}")
+            return None
+        
+        # Safety check: skip if cached vectors contain NaNs
+        if torch.isnan(patient_vec).any() or torch.isnan(admission_vec).any():
             return None
 
         # Build progression multilabel vector
@@ -130,6 +156,7 @@ class EHRDataset(Dataset):
         # Labels
         mortality   = float(row['inhospital_dead'])
         los_log     = float(row['los_log'])
+        los_7d      = float(row['los_7d'])
         readmission = float(row['readmission_30d']) if not np.isnan(row['readmission_30d']) else -1.0
         # -1.0 = missing readmission label (last admission or patient died)
         # masked out in loss computation
@@ -141,6 +168,7 @@ class EHRDataset(Dataset):
             'admission_vec': admission_vec,                                    # (64,)
             'mortality':    torch.tensor(mortality,    dtype=torch.float32),
             'los_log':      torch.tensor(los_log,      dtype=torch.float32),
+            'los_7d':       torch.tensor(los_7d,       dtype=torch.float32),
             'readmission':  torch.tensor(readmission,  dtype=torch.float32),
             'progression':  torch.tensor(progression,  dtype=torch.float32),  # (200,)
             'adm_id':       adm_id,
@@ -187,6 +215,7 @@ def ehr_collate_fn(batch):
         'admission_vec': torch.stack([b['admission_vec'] for b in batch]),     # (B, 64)
         'mortality':     torch.stack([b['mortality']     for b in batch]),     # (B,)
         'los_log':       torch.stack([b['los_log']       for b in batch]),     # (B,)
+        'los_7d':        torch.stack([b['los_7d']       for b in batch]),     # (B,)
         'readmission':   torch.stack([b['readmission']   for b in batch]),     # (B,)
         'progression':   torch.stack([b['progression']   for b in batch]),     # (B, 200)
         'adm_ids':       [b['adm_id'] for b in batch],
@@ -230,6 +259,8 @@ class EHRModel(nn.Module):
             batch_first = True,
             dropout     = 0.0,          # dropout handled outside for single layer
         )
+
+        self.use_gradient_checkpointing = False
 
         # Projection: concat → shared repr
         concat_dim = HIDDEN_SIZE + STATIC_DIM + STATIC_DIM  # 256 + 64 (patient) + 64 (admission) = 384
@@ -282,9 +313,20 @@ class EHRModel(nn.Module):
         packed = pack_padded_sequence(
             emb, lengths.cpu(), batch_first=True, enforce_sorted=False
         )
-        packed_out, _ = self.gru(packed)
-        gru_out, _    = pad_packed_sequence(packed_out, batch_first=True)
-        # gru_out: (B, T, 256)
+        
+        # GRU pass
+        if self.use_gradient_checkpointing and self.training:
+            from torch.utils.checkpoint import checkpoint
+            def gru_forward(x):
+                out, _ = self.gru(x)
+                return out
+            gru_out_packed = checkpoint(gru_forward, packed, use_reentrant=False)
+        else:
+            gru_out_packed, _ = self.gru(packed)
+            
+        gru_out, _ = nn.utils.rnn.pad_packed_sequence(
+            gru_out_packed, batch_first=True
+        )                                            # (B, T, 256)
 
         # Slice hidden state at last real token (DISCHARGE position)
         # lengths[i] - 1 is the index of the DISCHARGE token since we slice
@@ -297,6 +339,16 @@ class EHRModel(nn.Module):
         combined = torch.cat([h_discharge, patient_vec, admission_vec], dim=-1)
         # (B, 384)
         shared = self.proj(combined)   # (B, 128)
+
+        # DEBUG: Check for NaNs
+        if torch.isnan(shared).any():
+            print(f"\n[DEBUG] NaN detected in model output!")
+            print(f"  - emb max/min: {emb.max().item():.2f}/{emb.min().item():.2f}")
+            print(f"  - dt max/min: {dt.max().item():.2f}/{dt.min().item():.2f}")
+            print(f"  - lam: {lam.item():.4f}")
+            print(f"  - h_discharge max/min: {h_discharge.max().item():.2f}/{h_discharge.min().item():.2f}")
+            print(f"  - patient_vec max/min: {patient_vec.max().item():.2f}/{patient_vec.min().item():.2f}")
+            print(f"  - admission_vec max/min: {admission_vec.max().item():.2f}/{admission_vec.min().item():.2f}")
 
         # 4 prediction heads
         return {

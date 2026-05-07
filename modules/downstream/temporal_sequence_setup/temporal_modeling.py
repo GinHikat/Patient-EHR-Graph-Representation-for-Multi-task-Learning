@@ -10,15 +10,20 @@ import sys, os
 from dotenv import load_dotenv
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.abspath(os.path.join(current_dir, "../../"))
+project_root = os.path.abspath(os.path.join(current_dir, "../../../"))
 if project_root not in sys.path:
     sys.path.append(project_root)
+
+# Add modules/downstream to sys.path to allow importing 'presetup'
+downstream_root = os.path.abspath(os.path.join(current_dir, "../"))
+if downstream_root not in sys.path:
+    sys.path.append(downstream_root)
 
 if current_dir not in sys.path:
     sys.path.append(current_dir)
 
-from GAT import KG_GAT
-from unified_encoder import *
+from presetup.GAT import KG_GAT
+from presetup.unified_encoder import *
 from shared_functions.global_functions import query_neo4j
 
 load_dotenv() 
