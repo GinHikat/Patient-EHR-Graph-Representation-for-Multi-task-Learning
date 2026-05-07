@@ -23,7 +23,7 @@ modules/models/.models/*
 Clinical-Note-Extraction/
 
 .gitnexus
-
+*.vscode 
 Note/
 
 AGENTS.md

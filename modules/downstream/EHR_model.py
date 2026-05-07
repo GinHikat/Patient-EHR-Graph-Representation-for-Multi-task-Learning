@@ -1,23 +1,24 @@
 import pandas as pd
 import json
 import numpy as np
-import torch
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader
 from pathlib import Path
+import torch
+import torch.nn as nn
+from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
 import sys, os
 from dotenv import load_dotenv
 
 load_dotenv()
 
-data_dir = os.getenv('DATA_DIR')
 current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.abspath(os.path.join(current_dir, "../../../../"))
-
+project_root = os.path.abspath(os.path.join(current_dir, "../../"))
 if project_root not in sys.path:
     sys.path.append(project_root)
 
-load_dotenv()
+if current_dir not in sys.path:
+    sys.path.append(current_dir)
 
 from shared_functions.global_functions import *
 
@@ -30,7 +31,8 @@ N_DIAGNOSES = 200   # top-200 diagnosis
 pos_weight_mortality   = torch.tensor([63.93])   
 pos_weight_los         = torch.tensor([4.39])    
 pos_weight_readmission = torch.tensor([2.88])    
-pos_weight_progression = torch.load('progression_pos_weights.npy')  # 200-dim
+pos_weight_progression = torch.from_numpy(np.load(os.path.join(downstream_data_path, 'progression_pos_weights.npy'))).float()  # 200-dim
+
 
 class EHRDataset(Dataset):
     """
@@ -191,46 +193,250 @@ def ehr_collate_fn(batch):
         'pids':          [b['pid']    for b in batch],
     }
 
-if __name__ == '__main__':
-    import pandas as pd
-    from torch.utils.data import DataLoader
+# Models
+EMBED_DIM   = 128
+HIDDEN_SIZE = 256
+STATIC_DIM  = 64    # patient_vec and admission_vec each
+PROJ_DIM    = 128
+N_DIAGNOSES = 200
 
-    # Minimal fake data to test shapes
-    fake_df = pd.DataFrame({
-        'id':             ['22595853', '22841357'],
-        'patient_id':     ['10000032', '10000032'],
-        'inhospital_dead': [0.0, 0.0],
-        'los_log':        [np.log1p(2.5), np.log1p(1.8)],
-        'readmission_30d': [1.0, 0.0],
-    })
+class EHRModel(nn.Module):
+    """
+    Args:
+        n_diagnoses (int) : size of progression label space (default 200)
+        dropout (float)   : dropout rate in projection and heads
+        lambda_init (float): initial value for Δt decay parameter λ
+                             learned during training
+    """
 
-    fake_admission_nodes = {
-        '22595853': {'diagnoses': ['hypertension', 'diabetes mellitus'], 'drugs': []},
-        '22841357': {'diagnoses': ['atrial fibrillation'],               'drugs': []},
-    }
+    def __init__(
+        self,
+        n_diagnoses: int = N_DIAGNOSES,
+        dropout: float   = 0.1,
+        lambda_init: float = 0.1,
+    ):
+        super().__init__()
 
-    fake_diag_to_idx = {'hypertension': 0, 'diabetes mellitus': 1, 'atrial fibrillation': 2}
+        # Δt decay parameter — learned scalar
+        # emb_t = emb_t * exp(-λ * Δt)
+        # λ > 0 enforced via softplus in forward
+        self.log_lambda = nn.Parameter(torch.tensor(lambda_init).log())
 
-    fake_patient_cache   = {'10000032': torch.zeros(64)}
-    fake_admission_cache = {'22595853': torch.zeros(64), '22841357': torch.zeros(64)}
+        # GRU
+        self.gru = nn.GRU(
+            input_size  = EMBED_DIM,    # 128
+            hidden_size = HIDDEN_SIZE,  # 256
+            num_layers  = 1,
+            batch_first = True,
+            dropout     = 0.0,          # dropout handled outside for single layer
+        )
 
-    dataset = EHRDataset(
-        admissions_df   = fake_df,
-        timeline_dir    = os.path.join(data_dir, 'Timelines'),
-        admission_nodes = fake_admission_nodes,
-        diag_to_idx     = fake_diag_to_idx,
-        patient_cache   = fake_patient_cache,
-        admission_cache = fake_admission_cache,
-    )
-    sample = dataset[0]
-    print('emb shape:',        sample['emb'].shape)
-    print('dt shape:',         sample['dt'].shape)
-    print('progression shape:',sample['progression'].shape)
-    
-    loader = DataLoader(dataset, batch_size=2, collate_fn=ehr_collate_fn)
-    batch  = next(iter(loader))
-    print('Batch emb shape:', batch['emb'].shape)   # (2, max_T, 128)
+        # Projection: concat → shared repr
+        concat_dim = HIDDEN_SIZE + STATIC_DIM + STATIC_DIM  # 256 + 64 (patient) + 64 (admission) = 384
+        self.proj = nn.Sequential(
+            nn.Linear(concat_dim, PROJ_DIM),
+            nn.LayerNorm(PROJ_DIM),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+        )
 
-    print('EHRDataset defined OK ✓')
-    print('Import and use:')
-    print('  from ehr_dataset import EHRDataset, ehr_collate_fn')
+        # 4 Prediction heads
+        # All output raw logits — sigmoid/BCE applied in loss
+        self.head_mortality   = nn.Linear(PROJ_DIM, 1)
+        self.head_los         = nn.Linear(PROJ_DIM, 1)
+        self.head_readmission = nn.Linear(PROJ_DIM, 1)
+        self.head_progression = nn.Linear(PROJ_DIM, n_diagnoses)
+
+    def forward(self, batch):
+        """
+        Args:
+            batch (dict) from ehr_collate_fn:
+                emb           : (B, T, 128)  padded timeline embeddings
+                dt            : (B, T)       Δt values in days
+                lengths       : (B,)         true sequence lengths
+                patient_vec   : (B, 64)
+                admission_vec : (B, 64)
+
+        Returns:
+            dict of logits:
+                mortality   : (B, 1)
+                los_7d      : (B, 1)
+                readmission : (B, 1)
+                progression : (B, 200)
+        """
+        emb           = batch['emb']            # (B, T, 128)
+        dt            = batch['dt']             # (B, T)
+        lengths       = batch['lengths']        # (B,)
+        patient_vec   = batch['patient_vec']    # (B, 64)
+        admission_vec = batch['admission_vec']  # (B, 64)
+
+        # Apply exponential Δt decay
+        # λ = softplus(log_lambda) ensures λ > 0
+        lam = torch.nn.functional.softplus(self.log_lambda)
+
+        # decay shape: (B, T, 1) → broadcast over 128 dims
+        decay = torch.exp(-lam * dt).unsqueeze(-1)   # (B, T, 1)
+        emb   = emb * decay                           # (B, T, 128)
+
+        # GRU with packed sequence (ignores padding)
+        packed = pack_padded_sequence(
+            emb, lengths.cpu(), batch_first=True, enforce_sorted=False
+        )
+        packed_out, _ = self.gru(packed)
+        gru_out, _    = pad_packed_sequence(packed_out, batch_first=True)
+        # gru_out: (B, T, 256)
+
+        # Slice hidden state at last real token (DISCHARGE position)
+        # lengths[i] - 1 is the index of the DISCHARGE token since we slice
+        # the timeline up to and including DISCHARGE in EHRDataset
+        idx = (lengths - 1).clamp(min=0)             # (B,)
+        idx_expanded = idx.view(-1, 1, 1).expand(-1, 1, HIDDEN_SIZE)
+        h_discharge  = gru_out.gather(1, idx_expanded).squeeze(1)  # (B, 256)
+
+        # Concat static vectors + project
+        combined = torch.cat([h_discharge, patient_vec, admission_vec], dim=-1)
+        # (B, 384)
+        shared = self.proj(combined)   # (B, 128)
+
+        # 4 prediction heads
+        return {
+            'mortality':   self.head_mortality(shared),    # (B, 1)
+            'los_7d':      self.head_los(shared),          # (B, 1)
+            'readmission': self.head_readmission(shared),  # (B, 1)
+            'progression': self.head_progression(shared),  # (B, 200)
+        }
+
+# Loss function
+class EHRLoss(nn.Module):
+    """
+    Multi-task BCE loss with per-task pos_weight and label masking.
+
+    Masking rules:
+        readmission : label == -1.0 → excluded (last admission / patient died)
+        progression : all-zero vector → excluded (no top-200 diagnoses)
+
+    Task weights allow tuning relative importance during training.
+    Default: all tasks weighted equally.
+    """
+
+    def __init__(
+        self,
+        pos_weight_mortality:   torch.Tensor,   # (1,)
+        pos_weight_los:         torch.Tensor,   # (1,)
+        pos_weight_readmission: torch.Tensor,   # (1,)
+        pos_weight_progression: torch.Tensor,   # (200,)
+        w_mortality:   float = 1.0,
+        w_los:         float = 1.0,
+        w_readmission: float = 1.0,
+        w_progression: float = 1.0,
+    ):
+        super().__init__()
+
+        self.w_mortality   = w_mortality
+        self.w_los         = w_los
+        self.w_readmission = w_readmission
+        self.w_progression = w_progression
+
+        self.crit_mortality   = nn.BCEWithLogitsLoss(pos_weight=pos_weight_mortality)
+        self.crit_los         = nn.BCEWithLogitsLoss(pos_weight=pos_weight_los)
+        self.crit_readmission = nn.BCEWithLogitsLoss(pos_weight=pos_weight_readmission)
+        # reduction='none' so we can mask per-diagnosis
+        self.crit_progression = nn.BCEWithLogitsLoss(
+            pos_weight=pos_weight_progression, reduction='none'
+        )
+
+    def forward(self, logits: dict, batch: dict):
+        """
+        Returns:
+            total_loss : scalar
+            loss_dict  : {task: scalar} for logging
+        """
+        labels_mort = batch['mortality'].unsqueeze(1)    # (B, 1)
+        labels_los  = batch['los_7d'].unsqueeze(1)       # (B, 1)
+        labels_readm = batch['readmission'].unsqueeze(1) # (B, 1)
+        labels_prog  = batch['progression']              # (B, 200)
+
+        # Mortality
+        loss_mort = self.crit_mortality(logits['mortality'], labels_mort)
+
+        # LOS
+        loss_los = self.crit_los(logits['los_7d'], labels_los)
+
+        # Readmission — mask missing labels (-1.0)
+        readm_mask = (labels_readm >= 0)   # (B, 1) — False where label == -1
+        if readm_mask.any():
+            loss_readm = self.crit_readmission(
+                logits['readmission'][readm_mask],
+                labels_readm[readm_mask]
+            )
+        else:
+            loss_readm = torch.tensor(0.0, device=logits['readmission'].device)
+
+        # Progression — mask admissions with no top-200 diagnoses
+        prog_mask = (labels_prog.sum(dim=-1) > 0)   # (B,)
+        if prog_mask.any():
+            prog_loss_unreduced = self.crit_progression(
+                logits['progression'][prog_mask],
+                labels_prog[prog_mask]
+            )   # (n_valid, 200)
+            loss_prog = prog_loss_unreduced.mean()
+        else:
+            loss_prog = torch.tensor(0.0, device=logits['progression'].device)
+
+        # Weighted total
+        total = (
+            self.w_mortality   * loss_mort  +
+            self.w_los         * loss_los   +
+            self.w_readmission * loss_readm +
+            self.w_progression * loss_prog
+        )
+
+        loss_dict = {
+            'total':       total.item(),
+            'mortality':   loss_mort.item(),
+            'los_7d':      loss_los.item(),
+            'readmission': loss_readm.item(),
+            'progression': loss_prog.item(),
+        }
+
+        return total, loss_dict
+
+# if __name__ == '__main__':
+#     B, T = 4, 52   # batch of 4, max timeline length 52
+
+#     # Fake batch
+#     batch = {
+#         'emb':           torch.randn(B, T, 128),
+#         'dt':            torch.rand(B, T) * 30,       # 0-30 days
+#         'lengths':       torch.tensor([52, 40, 30, 20]),
+#         'patient_vec':   torch.randn(B, 64),
+#         'admission_vec': torch.randn(B, 64),
+#         'mortality':     torch.tensor([0., 1., 0., 0.]),
+#         'los_7d':        torch.tensor([1., 0., 0., 1.]),
+#         'readmission':   torch.tensor([1., -1., 0., 1.]),   # -1 = missing
+#         'progression':   torch.zeros(B, 200),
+#     }
+#     batch['progression'][0, [3, 17, 42]] = 1.0   # some positives
+
+#     model = EHRModel()
+#     print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}")
+
+#     logits = model(batch)
+#     print("Output shapes:")
+#     for k, v in logits.items():
+#         print(f"  {k}: {tuple(v.shape)}")
+
+#     # Test loss
+#     criterion = EHRLoss(
+#         pos_weight_mortality   = torch.tensor([63.93]),
+#         pos_weight_los         = torch.tensor([4.39]),
+#         pos_weight_readmission = torch.tensor([2.88]),
+#         pos_weight_progression = torch.ones(200),
+#     )
+#     total_loss, loss_dict = criterion(logits, batch)
+#     print(f"\nLoss breakdown:")
+#     for k, v in loss_dict.items():
+#         print(f"  {k}: {v:.4f}")
+
+#     assert not torch.isnan(total_loss), "NaN in loss!"
+#     print("\nEHRModel OK ✓")

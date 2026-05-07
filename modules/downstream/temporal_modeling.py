@@ -7,18 +7,24 @@ import json
 from datetime import datetime
 
 import sys, os
-project_root = os.path.abspath(os.path.join(os.getcwd(), ".."))
+from dotenv import load_dotenv
+
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.abspath(os.path.join(current_dir, "../../"))
 if project_root not in sys.path:
     sys.path.append(project_root)
 
-from modules.downstream.GAT import KG_GAT
-from modules.downstream.unified_encoder import *
+if current_dir not in sys.path:
+    sys.path.append(current_dir)
 
-from dotenv import load_dotenv
+from GAT import KG_GAT
+from unified_encoder import *
+from shared_functions.global_functions import query_neo4j
+
 load_dotenv() 
 
 data_dir = os.getenv('DATA_DIR')
-base_data_dir = os.path.join(project_root, 'data')
+base_data_dir = os.path.join(project_root, 'Thesis', 'data')
 downstream_data_path = os.path.join(base_data_dir, 'downstream')
 
 with open(os.path.join(downstream_data_path, 'admission_nodes.json'), 'r') as f:

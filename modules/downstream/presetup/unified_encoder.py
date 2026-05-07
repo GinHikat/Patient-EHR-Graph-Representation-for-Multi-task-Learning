@@ -1,11 +1,6 @@
-import pandas as pd
 import numpy as np
 import torch
 import torch.nn as nn
-# import torch.nn.functional as F
-# import torch.optim as optim
-# from torch.utils.data import Dataset, DataLoader
-# from torch_geometric.nn import GATConv, GCNConv, SAGEConv
 
 import sys, os
 project_root = os.path.abspath(os.path.join(os.getcwd(), ".."))
