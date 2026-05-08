@@ -8,10 +8,6 @@ from torch.optim import AdamW
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MultiLabelBinarizer
 from tqdm.auto import tqdm
-try:
-    import bitsandbytes as bnb
-except ImportError:
-    bnb = None
 import os
 import sys
 import warnings
