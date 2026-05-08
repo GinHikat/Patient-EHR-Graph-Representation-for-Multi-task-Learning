@@ -5,6 +5,7 @@ from torch.utils.data import Dataset, DataLoader
 from pathlib import Path
 import torch
 import torch.nn as nn
+import math
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
 import sys, os
@@ -23,7 +24,7 @@ if current_dir not in sys.path:
 # from shared_functions.global_functions import *
 
 base_data_dir = os.path.join(project_root, 'data')
-base_data_path = os.path.join(base_data_dir, 'Timeline')
+base_data_path = os.path.join(base_data_dir, 'downstream')
 
 N_DIAGNOSES = 200   # top-200 diagnosis 
 
@@ -64,8 +65,9 @@ class EHRDataset(Dataset):
         df = admissions_df.copy()
         df = df[df['inhospital_dead'].notna()]
         df = df[df['los_log'].notna()]
-        df['id']         = df['id'].astype(str)
-        df['patient_id'] = df['patient_id'].astype(str)
+        # Ensure IDs are strings without .0 if they were read as floats
+        df['id']         = df['id'].astype(float).apply(lambda x: str(int(x)) if not pd.isna(x) else x)
+        df['patient_id'] = df['patient_id'].astype(float).apply(lambda x: str(int(x)) if not pd.isna(x) else x)
         self.df = df.reset_index(drop=True)
 
         self._meta_cache   = {}  # Cache meta per patient
@@ -229,15 +231,24 @@ STATIC_DIM  = 64    # patient_vec and admission_vec each
 PROJ_DIM    = 128
 N_DIAGNOSES = 200
 
-class EHRModel(nn.Module):
-    """
-    Args:
-        n_diagnoses (int) : size of progression label space (default 200)
-        dropout (float)   : dropout rate in projection and heads
-        lambda_init (float): initial value for Δt decay parameter λ
-                             learned during training
-    """
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model, max_len=5000):
+        super().__init__()
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        pe = pe.unsqueeze(0)
+        self.register_buffer('pe', pe)
 
+    def forward(self, x):
+        return x + self.pe[:, :x.size(1)]
+
+class EHRTransformer(nn.Module):
+    """
+    Transformer-based sequence modeling for EHR data.
+    """
     def __init__(
         self,
         n_diagnoses: int = N_DIAGNOSES,
@@ -246,24 +257,25 @@ class EHRModel(nn.Module):
     ):
         super().__init__()
 
-        # Δt decay parameter — learned scalar
-        # emb_t = emb_t * exp(-λ * Δt)
-        # λ > 0 enforced via softplus in forward
         self.log_lambda = nn.Parameter(torch.tensor(lambda_init).log())
 
-        # GRU
-        self.gru = nn.GRU(
-            input_size  = EMBED_DIM,    # 128
-            hidden_size = HIDDEN_SIZE,  # 256
-            num_layers  = 1,
-            batch_first = True,
-            dropout     = 0.0,          # dropout handled outside for single layer
+        # Transformer layers
+        self.input_proj = nn.Linear(EMBED_DIM, HIDDEN_SIZE)
+        self.pos_encoder = PositionalEncoding(HIDDEN_SIZE)
+        
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=HIDDEN_SIZE,
+            nhead=8,
+            dim_feedforward=HIDDEN_SIZE * 4,
+            dropout=dropout,
+            batch_first=True
         )
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=3)
 
         self.use_gradient_checkpointing = False
 
         # Projection: concat → shared repr
-        concat_dim = HIDDEN_SIZE + STATIC_DIM + STATIC_DIM  # 256 + 64 (patient) + 64 (admission) = 384
+        concat_dim = HIDDEN_SIZE + STATIC_DIM + STATIC_DIM 
         self.proj = nn.Sequential(
             nn.Linear(concat_dim, PROJ_DIM),
             nn.LayerNorm(PROJ_DIM),
@@ -272,91 +284,128 @@ class EHRModel(nn.Module):
         )
 
         # 4 Prediction heads
-        # All output raw logits — sigmoid/BCE applied in loss
         self.head_mortality   = nn.Linear(PROJ_DIM, 1)
         self.head_los         = nn.Linear(PROJ_DIM, 1)
         self.head_readmission = nn.Linear(PROJ_DIM, 1)
         self.head_progression = nn.Linear(PROJ_DIM, n_diagnoses)
 
     def forward(self, batch):
-        """
-        Args:
-            batch (dict) from ehr_collate_fn:
-                emb           : (B, T, 128)  padded timeline embeddings
-                dt            : (B, T)       Δt values in days
-                lengths       : (B,)         true sequence lengths
-                patient_vec   : (B, 64)
-                admission_vec : (B, 64)
-
-        Returns:
-            dict of logits:
-                mortality   : (B, 1)
-                los_7d      : (B, 1)
-                readmission : (B, 1)
-                progression : (B, 200)
-        """
         emb           = batch['emb']            # (B, T, 128)
         dt            = batch['dt']             # (B, T)
         lengths       = batch['lengths']        # (B,)
         patient_vec   = batch['patient_vec']    # (B, 64)
         admission_vec = batch['admission_vec']  # (B, 64)
 
-        # Apply exponential Δt decay
-        # λ = softplus(log_lambda) ensures λ > 0
         lam = torch.nn.functional.softplus(self.log_lambda)
+        decay = torch.exp(-lam * dt).unsqueeze(-1)
+        emb   = emb * decay
 
-        # decay shape: (B, T, 1) → broadcast over 128 dims
-        decay = torch.exp(-lam * dt).unsqueeze(-1)   # (B, T, 1)
-        emb   = emb * decay                           # (B, T, 128)
+        # Transformer pass
+        x = self.input_proj(emb)
+        x = self.pos_encoder(x)
+        
+        B, T, _ = x.shape
+        mask = torch.arange(T, device=x.device).expand(B, T) >= lengths.unsqueeze(1)
+        
+        trans_out = self.transformer(x, src_key_padding_mask=mask)
 
-        # GRU with packed sequence (ignores padding)
+        idx = (lengths - 1).clamp(min=0)
+        idx_expanded = idx.view(-1, 1, 1).expand(-1, 1, HIDDEN_SIZE)
+        h_discharge  = trans_out.gather(1, idx_expanded).squeeze(1)
+
+        combined = torch.cat([h_discharge, patient_vec, admission_vec], dim=-1)
+        shared = self.proj(combined)
+
+        return {
+            'mortality':   self.head_mortality(shared),
+            'los_7d':      self.head_los(shared),
+            'readmission': self.head_readmission(shared),
+            'progression': self.head_progression(shared),
+        }
+
+class EHRModel(nn.Module):
+    """
+    Original LSTM-based sequence modeling for EHR data.
+    """
+    def __init__(
+        self,
+        n_diagnoses: int = N_DIAGNOSES,
+        dropout: float   = 0.1,
+        lambda_init: float = 0.1,
+    ):
+        super().__init__()
+
+        # Δt decay parameter
+        self.log_lambda = nn.Parameter(torch.tensor(lambda_init).log())
+
+        # LSTM layer
+        self.lstm = nn.LSTM(
+            input_size  = EMBED_DIM,
+            hidden_size = HIDDEN_SIZE,
+            num_layers  = 1,
+            batch_first = True,
+        )
+
+        self.use_gradient_checkpointing = False
+
+        # Projection: concat → shared repr
+        concat_dim = HIDDEN_SIZE + STATIC_DIM + STATIC_DIM
+        self.proj = nn.Sequential(
+            nn.Linear(concat_dim, PROJ_DIM),
+            nn.LayerNorm(PROJ_DIM),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+        )
+
+        # 4 Prediction heads
+        self.head_mortality   = nn.Linear(PROJ_DIM, 1)
+        self.head_los         = nn.Linear(PROJ_DIM, 1)
+        self.head_readmission = nn.Linear(PROJ_DIM, 1)
+        self.head_progression = nn.Linear(PROJ_DIM, n_diagnoses)
+
+    def forward(self, batch):
+        emb           = batch['emb']
+        dt            = batch['dt']
+        lengths       = batch['lengths']
+        patient_vec   = batch['patient_vec']
+        admission_vec = batch['admission_vec']
+
+        lam = torch.nn.functional.softplus(self.log_lambda)
+        decay = torch.exp(-lam * dt).unsqueeze(-1)
+        emb   = emb * decay
+
+        # LSTM with packed sequence
         packed = pack_padded_sequence(
             emb, lengths.cpu(), batch_first=True, enforce_sorted=False
         )
         
-        # GRU pass
         if self.use_gradient_checkpointing and self.training:
             from torch.utils.checkpoint import checkpoint
-            def gru_forward(x):
-                out, _ = self.gru(x)
+            def lstm_forward(x):
+                out, _ = self.lstm(x)
                 return out
-            gru_out_packed = checkpoint(gru_forward, packed, use_reentrant=False)
+            lstm_out_packed = checkpoint(lstm_forward, packed, use_reentrant=False)
         else:
-            gru_out_packed, _ = self.gru(packed)
+            lstm_out_packed, _ = self.lstm(packed)
             
-        gru_out, _ = nn.utils.rnn.pad_packed_sequence(
-            gru_out_packed, batch_first=True
-        )                                            # (B, T, 256)
+        lstm_out, _ = nn.utils.rnn.pad_packed_sequence(
+            lstm_out_packed, batch_first=True
+        )
 
-        # Slice hidden state at last real token (DISCHARGE position)
-        # lengths[i] - 1 is the index of the DISCHARGE token since we slice
-        # the timeline up to and including DISCHARGE in EHRDataset
-        idx = (lengths - 1).clamp(min=0)             # (B,)
+        idx = (lengths - 1).clamp(min=0)
         idx_expanded = idx.view(-1, 1, 1).expand(-1, 1, HIDDEN_SIZE)
-        h_discharge  = gru_out.gather(1, idx_expanded).squeeze(1)  # (B, 256)
+        h_discharge  = lstm_out.gather(1, idx_expanded).squeeze(1)
 
-        # Concat static vectors + project
         combined = torch.cat([h_discharge, patient_vec, admission_vec], dim=-1)
-        # (B, 384)
-        shared = self.proj(combined)   # (B, 128)
+        shared = self.proj(combined)
 
-        # DEBUG: Check for NaNs
-        if torch.isnan(shared).any():
-            print(f"\n[DEBUG] NaN detected in model output!")
-            print(f"  - emb max/min: {emb.max().item():.2f}/{emb.min().item():.2f}")
-            print(f"  - dt max/min: {dt.max().item():.2f}/{dt.min().item():.2f}")
-            print(f"  - lam: {lam.item():.4f}")
-            print(f"  - h_discharge max/min: {h_discharge.max().item():.2f}/{h_discharge.min().item():.2f}")
-            print(f"  - patient_vec max/min: {patient_vec.max().item():.2f}/{patient_vec.min().item():.2f}")
-            print(f"  - admission_vec max/min: {admission_vec.max().item():.2f}/{admission_vec.min().item():.2f}")
-
-        # 4 prediction heads
         return {
-            'mortality':   self.head_mortality(shared),    # (B, 1)
-            'los_7d':      self.head_los(shared),          # (B, 1)
-            'readmission': self.head_readmission(shared),  # (B, 1)
-            'progression': self.head_progression(shared),  # (B, 200)
+            'mortality':   self.head_mortality(shared),
+            'los_7d':      self.head_los(shared),
+            'readmission': self.head_readmission(shared),
+            'progression': self.head_progression(shared),
         }
+
 
 # Loss function
 class EHRLoss(nn.Module):

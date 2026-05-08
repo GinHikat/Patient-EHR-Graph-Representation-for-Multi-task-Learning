@@ -28,18 +28,20 @@ if current_dir not in sys.path:
 
 from EHR_model import EHRDataset, ehr_collate_fn, EHRModel, EHRLoss
 
+data_dir = os.getenv('DATA_DIR')
 base_data_dir = os.path.join(project_root, 'data')
-data_path = os.path.join(base_data_dir, 'Timeline')
+# data_path = os.path.join(base_data_dir, 'Timeline')
+downstream_data_path = os.path.join(base_data_dir, 'downstream')
 
-TIMELINE_DIR         = os.path.join(base_data_dir, 'Timelines')
-ADMISSION_NODES_PATH = os.path.join(data_path, 'admission_nodes.json')
-DIAG_VOCAB_PATH      = os.path.join(data_path, 'top200_diag_vocab.json')
-PROG_WEIGHTS_PATH    = os.path.join(data_path, 'progression_pos_weights.npy')
-TRAIN_DF_PATH        = os.path.join(data_path, 'models', 'train_df.csv')
-VAL_DF_PATH          = os.path.join(data_path, 'models', 'val_df.csv')
-TEST_DF_PATH         = os.path.join(data_path, 'models', 'test_df.csv')
-PATIENT_CACHE_PATH   = os.path.join(data_path, 'setup', 'patient_cache.pt')
-ADMISSION_CACHE_PATH = os.path.join(data_path, 'setup', 'admission_cache.pt')
+TIMELINE_DIR         = os.path.join(data_dir, 'Timelines')
+ADMISSION_NODES_PATH = os.path.join(downstream_data_path, 'admission_nodes.json')
+DIAG_VOCAB_PATH      = os.path.join(downstream_data_path, 'top200_diag_vocab.json')
+PROG_WEIGHTS_PATH    = os.path.join(downstream_data_path, 'progression_pos_weights.npy')
+TRAIN_DF_PATH        = os.path.join(downstream_data_path, 'models', 'train_df.csv')
+VAL_DF_PATH          = os.path.join(downstream_data_path, 'models', 'val_df.csv')
+TEST_DF_PATH         = os.path.join(downstream_data_path, 'models', 'test_df.csv')
+PATIENT_CACHE_PATH   = os.path.join(downstream_data_path, 'setup', 'patient_cache.pt')
+ADMISSION_CACHE_PATH = os.path.join(downstream_data_path, 'setup', 'admission_cache.pt')
 
 CHECKPOINT_DIR = 'checkpoints'
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
@@ -55,6 +57,13 @@ NUM_WORKERS   = 4
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f'Using device: {DEVICE}')
+print(f'Project root: {project_root}')
+print(f'DATA_DIR: {data_dir}')
+print(f'TIMELINE_DIR: {TIMELINE_DIR}')
+if not os.path.exists(TIMELINE_DIR):
+    print(f"ERROR: TIMELINE_DIR '{TIMELINE_DIR}' does not exist! Check your DATA_DIR in .env or environment variables.")
+    sys.exit(1)
+print(f'TRAIN_DF_PATH: {TRAIN_DF_PATH}')
 
 # Evaluation — AUROC per task
 def evaluate(model, loader, criterion, device):
@@ -356,8 +365,8 @@ def train(
 if __name__ == '__main__':
 
     print('Loading data...')
-    train_df = pd.read_csv(TRAIN_DF_PATH)
-    val_df   = pd.read_csv(VAL_DF_PATH)
+    train_df = pd.read_csv(TRAIN_DF_PATH, dtype={'id': str, 'patient_id': str})
+    val_df   = pd.read_csv(VAL_DF_PATH, dtype={'id': str, 'patient_id': str})
 
     # Add los_7d if not already there
     if 'los_7d' not in train_df.columns:
@@ -459,8 +468,8 @@ if __name__ == '__main__':
         print(f"Loaded best model weights from {best_model_path}")
     
     # Load test data
-    test_df = pd.read_csv(TEST_DF_PATH)
-    test_df['patient_id'] = test_df['patient_id'].astype(str)
+    test_df = pd.read_csv(TEST_DF_PATH, dtype={'id': str, 'patient_id': str})
+    # patient_id is already str due to dtype above
     
     test_dataset = EHRDataset(
         admissions_df   = test_df,
