@@ -1,27 +1,36 @@
-import os
-import json
-import argparse
-import numpy as np
-import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader
-from pathlib import Path
-from copy import deepcopy
-import json as json_lib
+import pandas as pd
+import sys
+from dotenv import load_dotenv
+
+load_dotenv()
+
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.abspath(os.path.join(current_dir, "../../../"))
+if project_root not in sys.path:
+    sys.path.append(project_root)
+
+if current_dir not in sys.path:
+    sys.path.append(current_dir)
+
 from EHR_model import EHRDataset, ehr_collate_fn
 from EHR_model import EHRLoss
+from EHR_training import train, evaluate
 
-import pandas as pd
+data_dir = os.getenv('DATA_DIR')
+base_data_dir = os.path.join(project_root, 'data')
+downstream_data_path = os.path.join(base_data_dir, 'downstream')
 
-TIMELINE_DIR         = 'Timelines'
-ADMISSION_NODES_PATH = 'admission_nodes.json'
-DIAG_VOCAB_PATH      = 'top200_diag_vocab.json'
-PROG_WEIGHTS_PATH    = 'progression_pos_weights.npy'
-TRAIN_DF_PATH        = 'train_df.csv'
-VAL_DF_PATH          = 'val_df.csv'
-TEST_DF_PATH         = 'test_df.csv'
-PATIENT_CACHE_PATH   = 'patient_cache.pt'
-ADMISSION_CACHE_PATH = 'admission_cache.pt'
+TIMELINE_DIR         = os.path.join(data_dir, 'Timelines')
+ADMISSION_NODES_PATH = os.path.join(downstream_data_path, 'admission_nodes.json')
+DIAG_VOCAB_PATH      = os.path.join(downstream_data_path, 'top200_diag_vocab.json')
+PROG_WEIGHTS_PATH    = os.path.join(downstream_data_path, 'progression_pos_weights.npy')
+TRAIN_DF_PATH        = os.path.join(downstream_data_path, 'models', 'train_df.csv')
+VAL_DF_PATH          = os.path.join(downstream_data_path, 'models', 'val_df.csv')
+TEST_DF_PATH         = os.path.join(downstream_data_path, 'models', 'test_df.csv')
+PATIENT_CACHE_PATH   = os.path.join(downstream_data_path, 'setup', 'patient_cache.pt')
+ADMISSION_CACHE_PATH = os.path.join(downstream_data_path, 'setup', 'admission_cache.pt')
+DRUG_VOCAB_PATH      = os.path.join(downstream_data_path, 'top50_drug_vocab.json')
+DRUG_WEIGHTS_PATH    = os.path.join(downstream_data_path, 'drug_rec_pos_weights.npy')
 ABLATION_DIR         = 'ablations'
 
 BATCH_SIZE   = 64
@@ -46,11 +55,12 @@ ABLATIONS = {
         'zero_labs':       False,
         'zero_omr':        False,
         'zero_kg':         False,
-        'tasks':           ['mortality', 'los_7d', 'readmission', 'progression'],
+        'tasks':           ['mortality', 'los_7d', 'readmission', 'progression', 'drug_rec'],
         'w_mortality':     1.0,
         'w_los':           1.0,
         'w_readmission':   1.0,
         'w_progression':   1.0,
+        'w_drug_rec':      1.0,
     },
     'no_admission_static': {
         'group':           'static_features',
@@ -62,11 +72,12 @@ ABLATIONS = {
         'zero_labs':       False,
         'zero_omr':        False,
         'zero_kg':         False,
-        'tasks':           ['mortality', 'los_7d', 'readmission', 'progression'],
+        'tasks':           ['mortality', 'los_7d', 'readmission', 'progression', 'drug_rec'],
         'w_mortality':     1.0,
         'w_los':           1.0,
         'w_readmission':   1.0,
         'w_progression':   1.0,
+        'w_drug_rec':      1.0,
     },
     'no_static_at_all': {
         'group':           'static_features',
@@ -78,11 +89,12 @@ ABLATIONS = {
         'zero_labs':       False,
         'zero_omr':        False,
         'zero_kg':         False,
-        'tasks':           ['mortality', 'los_7d', 'readmission', 'progression'],
+        'tasks':           ['mortality', 'los_7d', 'readmission', 'progression', 'drug_rec'],
         'w_mortality':     1.0,
         'w_los':           1.0,
         'w_readmission':   1.0,
         'w_progression':   1.0,
+        'w_drug_rec':      1.0,
     },
 
     # Group 2: Temporal modeling
@@ -96,11 +108,12 @@ ABLATIONS = {
         'zero_labs':       False,
         'zero_omr':        False,
         'zero_kg':         False,
-        'tasks':           ['mortality', 'los_7d', 'readmission', 'progression'],
+        'tasks':           ['mortality', 'los_7d', 'readmission', 'progression', 'drug_rec'],
         'w_mortality':     1.0,
         'w_los':           1.0,
         'w_readmission':   1.0,
         'w_progression':   1.0,
+        'w_drug_rec':      1.0,
     },
     'no_history': {
         'group':           'temporal',
@@ -112,11 +125,12 @@ ABLATIONS = {
         'zero_labs':       False,
         'zero_omr':        False,
         'zero_kg':         False,
-        'tasks':           ['mortality', 'los_7d', 'readmission', 'progression'],
+        'tasks':           ['mortality', 'los_7d', 'readmission', 'progression', 'drug_rec'],
         'w_mortality':     1.0,
         'w_los':           1.0,
         'w_readmission':   1.0,
         'w_progression':   1.0,
+        'w_drug_rec':      1.0,
     },
 
     # Group 3: Single task
@@ -196,11 +210,12 @@ ABLATIONS = {
         'zero_labs':       False,
         'zero_omr':        False,
         'zero_kg':         False,
-        'tasks':           ['mortality', 'los_7d', 'readmission', 'progression'],
+        'tasks':           ['mortality', 'los_7d', 'readmission', 'progression', 'drug_rec'],
         'w_mortality':     1.0,
         'w_los':           1.0,
         'w_readmission':   1.0,
         'w_progression':   1.0,
+        'w_drug_rec':      1.0,
     },
 
     # Group 5: Input modalities
@@ -214,11 +229,12 @@ ABLATIONS = {
         'zero_labs':       True,
         'zero_omr':        False,
         'zero_kg':         False,
-        'tasks':           ['mortality', 'los_7d', 'readmission', 'progression'],
+        'tasks':           ['mortality', 'los_7d', 'readmission', 'progression', 'drug_rec'],
         'w_mortality':     1.0,
         'w_los':           1.0,
         'w_readmission':   1.0,
         'w_progression':   1.0,
+        'w_drug_rec':      1.0,
     },
     'no_omr': {
         'group':           'input_modality',
@@ -230,11 +246,12 @@ ABLATIONS = {
         'zero_labs':       False,
         'zero_omr':        True,
         'zero_kg':         False,
-        'tasks':           ['mortality', 'los_7d', 'readmission', 'progression'],
+        'tasks':           ['mortality', 'los_7d', 'readmission', 'progression', 'drug_rec'],
         'w_mortality':     1.0,
         'w_los':           1.0,
         'w_readmission':   1.0,
         'w_progression':   1.0,
+        'w_drug_rec':      1.0,
     },
     'no_kg': {
         'group':           'input_modality',
@@ -246,11 +263,12 @@ ABLATIONS = {
         'zero_labs':       False,
         'zero_omr':        False,
         'zero_kg':         True,
-        'tasks':           ['mortality', 'los_7d', 'readmission', 'progression'],
+        'tasks':           ['mortality', 'los_7d', 'readmission', 'progression', 'drug_rec'],
         'w_mortality':     1.0,
         'w_los':           1.0,
         'w_readmission':   1.0,
         'w_progression':   1.0,
+        'w_drug_rec':      1.0,
     },
 }
 
@@ -265,11 +283,12 @@ BASE_CONFIG = {
     'zero_labs':       False,
     'zero_omr':        False,
     'zero_kg':         False,
-    'tasks':           ['mortality', 'los_7d', 'readmission', 'progression'],
+    'tasks':           ['mortality', 'los_7d', 'readmission', 'progression', 'drug_rec'],
     'w_mortality':     1.0,
     'w_los':           1.0,
     'w_readmission':   1.0,
     'w_progression':   1.0,
+    'w_drug_rec':      1.0,
 }
 
 
@@ -320,6 +339,7 @@ class AblationEHRModel(nn.Module):
         self.head_los         = nn.Linear(self.PROJ_DIM, 1)
         self.head_readmission = nn.Linear(self.PROJ_DIM, 1)
         self.head_progression = nn.Linear(self.PROJ_DIM, self.N_DIAGNOSES)
+        self.head_drug_rec    = nn.Linear(self.PROJ_DIM, 50)
 
     def forward(self, batch):
         from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
@@ -383,6 +403,7 @@ class AblationEHRModel(nn.Module):
             'los_7d':      self.head_los(shared),
             'readmission': self.head_readmission(shared),
             'progression': self.head_progression(shared),
+            'drug_rec':    self.head_drug_rec(shared),
         }
 
 
@@ -410,10 +431,12 @@ def run_ablation(name, config, data, pos_weights):
         pos_weight_los         = pos_weights['los'].to(DEVICE),
         pos_weight_readmission = pos_weights['readmission'].to(DEVICE),
         pos_weight_progression = pos_weights['progression'].to(DEVICE),
+        pos_weight_drug_rec    = pos_weights['drug_rec'].to(DEVICE),
         w_mortality   = config['w_mortality'],
         w_los         = config['w_los'],
         w_readmission = config['w_readmission'],
         w_progression = config['w_progression'],
+        w_drug_rec    = config.get('w_drug_rec', 0.0),
     ).to(DEVICE)
 
     optimizer = torch.optim.AdamW(
@@ -452,6 +475,7 @@ def run_ablation(name, config, data, pos_weights):
     print(f'  LOS:         {test_metrics["los_7d"]:.4f}')
     print(f'  Readmission: {test_metrics["readmission"]:.4f}')
     print(f'  Progression: {test_metrics["progression"]:.4f}')
+    print(f'  Drug Rec:    {test_metrics["drug_rec"]:.4f}')
 
     return test_metrics
 
@@ -463,7 +487,7 @@ def print_comparison_table(all_results):
     print('\n' + '='*90)
     print('ABLATION COMPARISON TABLE')
     print('='*90)
-    print(f'{"Ablation":<25} {"Group":<18} {"Mean":>6} {"Mort":>6} {"LOS":>6} {"Readm":>6} {"Prog":>6}')
+    print(f'{"Ablation":<25} {"Group":<18} {"Mean":>6} {"Mort":>6} {"LOS":>6} {"Readm":>6} {"Prog":>6} {"Drug":>6}')
     print('-'*90)
 
     # Sort by mean AUROC descending
@@ -481,7 +505,8 @@ def print_comparison_table(all_results):
             f'{metrics.get("mortality", 0):.4f} '
             f'{metrics.get("los_7d", 0):.4f} '
             f'{metrics.get("readmission", 0):.4f} '
-            f'{metrics.get("progression", 0):.4f}'
+            f'{metrics.get("progression", 0):.4f} '
+            f'{metrics.get("drug_rec", 0):.4f}'
         )
 
     print('='*90)
@@ -497,6 +522,7 @@ def print_comparison_table(all_results):
             'los_7d':      metrics.get('los_7d', 0),
             'readmission': metrics.get('readmission', 0),
             'progression': metrics.get('progression', 0),
+            'drug_rec':    metrics.get('drug_rec', 0),
         })
 
     pd.DataFrame(rows).to_csv(
@@ -534,6 +560,8 @@ if __name__ == '__main__':
         admission_nodes = json_lib.load(f)
     with open(DIAG_VOCAB_PATH) as f:
         diag_to_idx = json_lib.load(f)
+    with open(DRUG_VOCAB_PATH) as f:
+        drug_to_idx = json_lib.load(f)
 
     patient_cache   = torch.load(PATIENT_CACHE_PATH)
     admission_cache = torch.load(ADMISSION_CACHE_PATH)
@@ -544,6 +572,7 @@ if __name__ == '__main__':
             timeline_dir    = TIMELINE_DIR,
             admission_nodes = admission_nodes,
             diag_to_idx     = diag_to_idx,
+            drug_to_idx     = drug_to_idx,
             patient_cache   = patient_cache,
             admission_cache = admission_cache,
         )
@@ -566,12 +595,14 @@ if __name__ == '__main__':
     pw_los   = (train_df['los_7d'] == 0).sum() / (train_df['los_7d'] == 1).sum()
     pw_readm = (train_df['readmission_30d'] == 0).sum() / (train_df['readmission_30d'] == 1).sum()
     prog_w   = torch.tensor(np.load(PROG_WEIGHTS_PATH), dtype=torch.float32)
+    drug_w   = torch.tensor(np.load(DRUG_WEIGHTS_PATH), dtype=torch.float32)
 
     pos_weights = {
         'mortality':   torch.tensor([pw_mort],  dtype=torch.float32),
         'los':         torch.tensor([pw_los],   dtype=torch.float32),
         'readmission': torch.tensor([pw_readm], dtype=torch.float32),
         'progression': prog_w,
+        'drug_rec':    drug_w,
     }
     print(f'pos_weights — mort: {pw_mort:.2f}, los: {pw_los:.2f}, readm: {pw_readm:.2f}')
 

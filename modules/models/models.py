@@ -261,28 +261,23 @@ class LAATLayer(nn.Module):
         nn.init.xavier_uniform_(self.W)
 
     def forward(self, H):
-        # H: Document hidden states [batch_size, seq_len, hidden_size]
-        # U: Label query vectors [num_labels, hidden_size]
+        # H: [batch_size, seq_len, hidden_size]
         
-        # Prepare Query (U) for SDPA: [B, N, D]
-        # We treat labels as queries and document states as keys/values
-        Q = self.U.unsqueeze(0).expand(H.size(0), -1, -1)
+        # Calculate attention scores in float32 for stability
+        # Score_ln = h_l^T u_n
+        scores = torch.matmul(H.float(), self.U.transpose(0, 1).float())
         
-        # Use SDPA for optimized attention computation.
-        # scale=1.0 is used to match the original implementation's non-scaled dot product.
-        # This will automatically use FlashAttention or memory-efficient kernels.
-        V = torch.nn.functional.scaled_dot_product_attention(
-            Q, H, H, 
-            attn_mask=None, 
-            dropout_p=0.0, 
-            is_causal=False, 
-            scale=1.0
-        )
+        # Softmax over sequence length L in float32
+        A = torch.softmax(scores, dim=1) # [B, L, N]
         
-        # Final classification logit_n = v_n^T w_n + b_n
-        logits = (V * self.W).sum(dim=-1) + self.bias # [B, N]
+        # Label-specific document representation V = A^T H -> [B, N, D]
+        # Cast back to H's dtype for the representation
+        V = torch.matmul(A.transpose(1, 2), H.float())
         
-        return logits
+        # Final classification logit_n = v_n^T w_n + b_n in float32
+        logits = (V * self.W.float()).sum(dim=-1) + self.bias.float() # [B, N]
+        
+        return logits.to(H.dtype)
 
 class PLMICD_Internal(nn.Module):
     """
@@ -295,8 +290,8 @@ class PLMICD_Internal(nn.Module):
         self.hidden_size = self.encoder.config.hidden_size
         self.laat = LAATLayer(self.hidden_size, num_labels)
 
-    def forward(self, input_ids, attention_mask=None):
-        outputs = self.encoder(input_ids, attention_mask=attention_mask)
+    def forward(self, input_ids, attention_mask=None, global_attention_mask=None):
+        outputs = self.encoder(input_ids, attention_mask=attention_mask, global_attention_mask=global_attention_mask)
         H = outputs.last_hidden_state
         logits = self.laat(H)
         return SequenceClassifierOutput(logits=logits)
@@ -359,34 +354,28 @@ class MultiSynonymAttention(nn.Module):
         N = self.num_labels
         M = self.num_synonyms
         
-        # Flatten Q to treat each synonym as an independent query head: [B, N*M, D]
-        Q_flat = self.Q.view(1, N * M, D).expand(B, -1, -1)
+        # Flatten Q to treat each synonym as an independent query head
+        Q_flat = self.Q.view(-1, D) # [N*M, D]
         
-        # Optimized computation using SDPA
-        # This replaces manual scores calculation and softmax
-        V_all_flat = torch.nn.functional.scaled_dot_product_attention(
-            Q_flat, H, H,
-            attn_mask=None,
-            dropout_p=0.0,
-            is_causal=False,
-            scale=1.0
-        ) # [B, N*M, D]
+        # Calculate attention scores in float32
+        scores = torch.matmul(H.float(), Q_flat.transpose(0, 1).float())
+        A = torch.softmax(scores, dim=1) # [B, L, N*M]
         
-        V_all = V_all_flat.view(B, N, M, D)
+        # Synonym-specific document representations: [B, N*M, D]
+        V_all = torch.matmul(A.transpose(1, 2), H.float())
+        V_all = V_all.view(B, N, M, D)
         
-        # Aggregation: Max-pooling across synonyms to capture the most relevant match
+        # Aggregation: Max-pooling across synonyms
         V, _ = torch.max(V_all, dim=2) # [B, N, D]
         
-        # Aggregate synonym queries themselves (mean-pooling)
-        Q_agg = self.Q.mean(dim=1) # [N, D]
+        # Aggregate synonym queries themselves
+        Q_agg = self.Q.float().mean(dim=1) # [N, D]
         
-        # Biaffine Transformation: logit_n = v_n^T W q_n + b_n
-        # First compute V * W -> [B, N, D]
-        VW = torch.matmul(V, self.W)
-        # Then (VW) dot Q_agg + bias -> [B, N]
-        logits = (VW * Q_agg).sum(dim=-1) + self.bias
+        # Biaffine Transformation in float32: logit_n = v_n^T W q_n + b_n
+        VW = torch.matmul(V, self.W.float())
+        logits = (VW * Q_agg).sum(dim=-1) + self.bias.float()
         
-        return logits
+        return logits.to(H.dtype)
 
 class MSMN_Internal(nn.Module):
     """
@@ -399,8 +388,8 @@ class MSMN_Internal(nn.Module):
         self.hidden_size = self.encoder.config.hidden_size
         self.msa = MultiSynonymAttention(self.hidden_size, num_labels, num_synonyms)
 
-    def forward(self, input_ids, attention_mask=None):
-        outputs = self.encoder(input_ids, attention_mask=attention_mask)
+    def forward(self, input_ids, attention_mask=None, global_attention_mask=None):
+        outputs = self.encoder(input_ids, attention_mask=attention_mask, global_attention_mask=global_attention_mask)
         H = outputs.last_hidden_state
         logits = self.msa(H)
         return SequenceClassifierOutput(logits=logits)

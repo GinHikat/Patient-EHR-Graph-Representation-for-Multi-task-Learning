@@ -24,7 +24,7 @@ if current_dir not in sys.path:
 # from shared_functions.global_functions import *
 
 base_data_dir = os.path.join(project_root, 'data')
-base_data_path = os.path.join(base_data_dir, 'downstream')
+base_data_path = os.path.join(base_data_dir, 'Timeline')
 
 N_DIAGNOSES = 200   # top-200 diagnosis 
 N_DRUGS     = 50    # top-50 drugs
@@ -240,6 +240,7 @@ class EHRTransformer(nn.Module):
     def __init__(
         self,
         n_diagnoses: int = N_DIAGNOSES,
+        n_drugs: int     = N_DRUGS,
         dropout: float   = 0.1,
         lambda_init: float = 0.1,
     ):
@@ -276,6 +277,7 @@ class EHRTransformer(nn.Module):
         self.head_los         = nn.Linear(PROJ_DIM, 1)
         self.head_readmission = nn.Linear(PROJ_DIM, 1)
         self.head_progression = nn.Linear(PROJ_DIM, n_diagnoses)
+        self.head_drug_rec    = nn.Linear(PROJ_DIM, n_drugs)
 
     def forward(self, batch):
         emb           = batch['emb']            # (B, T, 128)
@@ -309,6 +311,7 @@ class EHRTransformer(nn.Module):
             'los_7d':      self.head_los(shared),
             'readmission': self.head_readmission(shared),
             'progression': self.head_progression(shared),
+            'drug_rec':    self.head_drug_rec(shared),
         }
 
 class EHRModel(nn.Module):
@@ -339,9 +342,9 @@ class EHRModel(nn.Module):
         self.lstm = nn.LSTM(
             input_size  = EMBED_DIM,    # 128
             hidden_size = HIDDEN_SIZE,  # 256
-            num_layers  = 1,
+            num_layers  = 2,
             batch_first = True,
-            dropout     = 0.0,          # dropout handled outside for single layer
+            dropout     = 0.5,          # dropout handled outside for single layer
         )
 
         self.use_gradient_checkpointing = False
