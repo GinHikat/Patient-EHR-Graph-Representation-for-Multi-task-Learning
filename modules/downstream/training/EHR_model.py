@@ -57,6 +57,7 @@ class EHRDataset(Dataset):
         drug_to_idx,                  
         patient_cache,
         admission_cache,
+        max_len=None,
     ):
         self.timeline_dir    = Path(timeline_dir)
         self.admission_nodes = admission_nodes
@@ -64,6 +65,7 @@ class EHRDataset(Dataset):
         self.drug_to_idx     = drug_to_idx   
         self.patient_cache   = patient_cache
         self.admission_cache = admission_cache
+        self.max_len         = max_len
 
         # One row per admission — drop rows with missing critical labels
         df = admissions_df.copy()
@@ -116,14 +118,23 @@ class EHRDataset(Dataset):
         if not emb_path.exists() or not dt_path.exists():
             return None
 
-        emb = np.load(emb_path)   # (T_full, 128)
-        dt  = np.load(dt_path)    # (T_full,)
+        emb = np.load(emb_path, mmap_mode='r')   # (T_full, 128)
+        dt  = np.load(dt_path, mmap_mode='r')    # (T_full,)
 
         if np.isnan(emb).any():
             return None
 
-        emb = emb[:discharge_pos + 1]   # (T_adm, 128)
-        dt  = dt[:discharge_pos + 1]    # (T_adm,)
+        # Slice and copy to ensure we aren't holding mmap handles in memory
+        emb = emb[:discharge_pos + 1]
+        dt  = dt[:discharge_pos + 1]
+
+        # Causal capping: keep the MOST RECENT max_len notes before discharge
+        if self.max_len is not None and len(emb) > self.max_len:
+            emb = emb[-self.max_len:]
+            dt  = dt[-self.max_len:]
+
+        emb = emb.copy()
+        dt  = dt.copy()
 
         # Static vectors from precomputed cache 
         patient_vec = self.patient_cache.get(pid)
@@ -219,6 +230,25 @@ STATIC_DIM  = 64    # patient_vec and admission_vec each
 PROJ_DIM    = 128
 N_DIAGNOSES = 200
 
+class TimeEncoding(nn.Module):
+    """
+    Learns a continuous embedding for time deltas (dt).
+    Uses a combination of linear and periodic components.
+    """
+    def __init__(self, d_model):
+        super().__init__()
+        self.linear = nn.Linear(1, 1)
+        self.periodic = nn.Linear(1, d_model - 1)
+        
+    def forward(self, dt):
+        # dt shape: (B, T)
+        dt = dt.unsqueeze(-1) # (B, T, 1)
+        
+        v1 = self.linear(dt) # Linear component
+        v2 = torch.sin(self.periodic(dt)) # Periodic components
+        
+        return torch.cat([v1, v2], dim=-1) # (B, T, d_model)
+
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, max_len=5000):
         super().__init__()
@@ -235,7 +265,8 @@ class PositionalEncoding(nn.Module):
 
 class EHRTransformer(nn.Module):
     """
-    Transformer-based sequence modeling for EHR data.
+    Upgraded Transformer-based sequence modeling for EHR data.
+    Injects static vectors as tokens and encodes relative time deltas (dt).
     """
     def __init__(
         self,
@@ -248,31 +279,33 @@ class EHRTransformer(nn.Module):
 
         self.log_lambda = nn.Parameter(torch.tensor(lambda_init).log())
 
-        # Transformer layers
+        # Projections
         self.input_proj = nn.Linear(EMBED_DIM, HIDDEN_SIZE)
+        self.static_proj = nn.Linear(STATIC_DIM, HIDDEN_SIZE) 
+        
+        self.time_encoder = TimeEncoding(HIDDEN_SIZE)
         self.pos_encoder = PositionalEncoding(HIDDEN_SIZE)
         
+        # Transformer layers
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=HIDDEN_SIZE,
             nhead=8,
             dim_feedforward=HIDDEN_SIZE * 4,
             dropout=dropout,
-            batch_first=True
+            batch_first=True,
+            activation='gelu'
         )
-        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=3)
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=4)
 
         self.use_gradient_checkpointing = False
 
-        # Projection: concat → shared repr
-        concat_dim = HIDDEN_SIZE + STATIC_DIM + STATIC_DIM 
         self.proj = nn.Sequential(
-            nn.Linear(concat_dim, PROJ_DIM),
+            nn.Linear(HIDDEN_SIZE, PROJ_DIM),
             nn.LayerNorm(PROJ_DIM),
             nn.ReLU(),
             nn.Dropout(dropout),
         )
 
-        # 4 Prediction heads
         self.head_mortality   = nn.Linear(PROJ_DIM, 1)
         self.head_los         = nn.Linear(PROJ_DIM, 1)
         self.head_readmission = nn.Linear(PROJ_DIM, 1)
@@ -286,25 +319,48 @@ class EHRTransformer(nn.Module):
         patient_vec   = batch['patient_vec']    # (B, 64)
         admission_vec = batch['admission_vec']  # (B, 64)
 
+        # 1. Temporal Decay (Learnable exponential decay)
         lam = torch.nn.functional.softplus(self.log_lambda)
         decay = torch.exp(-lam * dt).unsqueeze(-1)
         emb   = emb * decay
 
-        # Transformer pass
-        x = self.input_proj(emb)
+        # 2. Project clinical embeddings + add Time Embeddings
+        x = self.input_proj(emb)                # (B, T, 256)
+        x = x + self.time_encoder(dt)           # Inject continuous time information
+        
+        # 3. Project Static Contexts
+        p_tok = self.static_proj(patient_vec).unsqueeze(1)    # (B, 1, 256)
+        a_tok = self.static_proj(admission_vec).unsqueeze(1)  # (B, 1, 256)
+
+        # 4. Positional Encoding (Absolute sequence position)
         x = self.pos_encoder(x)
-        
-        B, T, _ = x.shape
-        mask = torch.arange(T, device=x.device).expand(B, T) >= lengths.unsqueeze(1)
-        
-        trans_out = self.transformer(x, src_key_padding_mask=mask)
 
-        idx = (lengths - 1).clamp(min=0)
-        idx_expanded = idx.view(-1, 1, 1).expand(-1, 1, HIDDEN_SIZE)
-        h_discharge  = trans_out.gather(1, idx_expanded).squeeze(1)
+        # 5. Prepend Static Context Tokens
+        x_full = torch.cat([p_tok, a_tok, x], dim=1) # (B, T+2, 256)
+        
+        # 5. Masking
+        B, T_full, _ = x_full.shape
+        # Adjust mask to account for 2 prepended tokens (which are never masked)
+        mask = torch.zeros((B, T_full), dtype=torch.bool, device=x.device)
+        for i, length in enumerate(lengths):
+            mask[i, length+2:] = True
+        
+        # 6. Transformer Pass
+        trans_out = self.transformer(x_full, src_key_padding_mask=mask)
 
-        combined = torch.cat([h_discharge, patient_vec, admission_vec], dim=-1)
-        shared = self.proj(combined)
+        # 7. Hybrid Global Representation
+        # Use the Patient_Token (index 0) as it has now attended to everything
+        # Plus the last clinical token (discharge)
+        idx_discharge = (lengths + 1).clamp(min=1) # +1 because of 2 prepended tokens
+        idx_expanded = idx_discharge.view(-1, 1, 1).expand(-1, 1, HIDDEN_SIZE)
+        h_discharge = trans_out.gather(1, idx_expanded).squeeze(1)
+        
+        h_global = trans_out[:, 0] # The evolved Patient Token
+        
+        # Combine global context and final state
+        shared_repr = (h_global + h_discharge) / 2.0
+        
+        shared = self.proj(shared_repr)
 
         return {
             'mortality':   self.head_mortality(shared),

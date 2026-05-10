@@ -40,8 +40,10 @@ def parse_args():
     parser.add_argument('--epochs', type=int, default=50, help='Number of epochs')
     parser.add_argument('--patience', type=int, default=7, help='Early stopping patience')
     parser.add_argument('--grad_clip', type=float, default=1.0, help='Gradient clipping')
-    parser.add_argument('--num_workers', type=int, default=4, help='Number of workers for data loading')
+    parser.add_argument('--num_workers', type=int, default=0, help='Number of workers for data loading')
     parser.add_argument('--threshold', type=float, default=0.6, help='Classification threshold')
+    parser.add_argument('--resume_from', type=str, default=None, help='Path to best_model.pt to resume from')
+    parser.add_argument('--start_epoch', type=int, default=1, help='Epoch to start from')
     return parser.parse_args()
 
 args = parse_args()
@@ -75,6 +77,7 @@ PATIENCE      = args.patience
 GRAD_CLIP     = args.grad_clip
 NUM_WORKERS   = args.num_workers
 THRESHOLD     = args.threshold
+MAX_LEN       = 512 # Cap long timelines for Transformer O(T^2) efficiency
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f'Using device: {DEVICE}')
@@ -202,6 +205,7 @@ def train(
     criterion,
     optimizer,
     scheduler,
+    start_epoch=1,
     n_epochs=N_EPOCHS,
     patience=PATIENCE,
     device=DEVICE):
@@ -210,14 +214,18 @@ def train(
     epochs_no_improve = 0
     history           = []
 
-    # Initialize/Clear metrics log file
-    with open(os.path.join(CHECKPOINT_DIR, 'metrics.txt'), 'w') as f:
-        f.write(f"=== TRAINING LOG START ===\n")
-        f.write(f"Device: {device}\n")
-        f.write(f"Batch size: {BATCH_SIZE}, LR: {LR}, Epochs: {n_epochs}\n")
-        f.write("="*40 + "\n")
+    # Initialize/Clear metrics log file only if starting from scratch
+    log_mode = 'w' if start_epoch == 1 else 'a'
+    with open(os.path.join(CHECKPOINT_DIR, 'metrics.txt'), log_mode) as f:
+        if start_epoch == 1:
+            f.write(f"=== TRAINING LOG START ===\n")
+            f.write(f"Device: {device}\n")
+            f.write(f"Batch size: {BATCH_SIZE}, LR: {LR}, Epochs: {n_epochs}\n")
+            f.write("="*40 + "\n")
+        else:
+            f.write(f"\n=== RESUMING FROM EPOCH {start_epoch} ===\n")
 
-    for epoch in range(1, n_epochs + 1):
+    for epoch in range(start_epoch, n_epochs + 1):
 
         model.train()
 
@@ -260,6 +268,16 @@ def train(
                 train_loss[k] += v
 
             n_batches += 1
+
+            # ── Linear LR Warmup ──────────────────────────────────────
+            if epoch <= 5: # Warmup over first 5 epochs
+                total_steps = 5 * len(train_loader)
+                current_step = (epoch - 1) * len(train_loader) + n_batches
+                lr_scale = min(1., float(current_step) / total_steps)
+                for pg in optimizer.param_groups:
+                    pg['lr'] = LR * lr_scale
+            # ──────────────────────────────────────────────────────────
+
 
             pbar.set_postfix({
                 'loss': f"{loss_dict['total']:.3f}",
@@ -395,6 +413,7 @@ if __name__ == '__main__':
         drug_to_idx     = drug_to_idx,
         patient_cache   = patient_cache,
         admission_cache = admission_cache,
+        max_len         = MAX_LEN,
     )
     val_dataset = EHRDataset(
         admissions_df   = val_df,
@@ -404,17 +423,22 @@ if __name__ == '__main__':
         drug_to_idx     = drug_to_idx,
         patient_cache   = patient_cache,
         admission_cache = admission_cache,
+        max_len         = MAX_LEN,
     )
 
+    MAX_LEN = 512 # Cap long timelines for Transformer O(T^2) efficiency
+    
     train_loader = DataLoader(
         train_dataset, batch_size=BATCH_SIZE, shuffle=True,
         collate_fn=ehr_collate_fn, num_workers=NUM_WORKERS,
         pin_memory=(DEVICE.type == 'cuda'),
+        persistent_workers=(NUM_WORKERS > 0)
     )
     val_loader = DataLoader(
         val_dataset, batch_size=BATCH_SIZE, shuffle=False,
         collate_fn=ehr_collate_fn, num_workers=NUM_WORKERS,
         pin_memory=(DEVICE.type == 'cuda'),
+        persistent_workers=(NUM_WORKERS > 0)
     )
 
     # Pos weights
@@ -444,6 +468,21 @@ if __name__ == '__main__':
     print(f'Model parameters: {sum(p.numel() for p in model.parameters()):,}')
     print(f'Gradient checkpointing: {model.use_gradient_checkpointing}')
 
+    # Resume from checkpoint if provided
+    if args.resume_from:
+        # Check if it's a full path or just a folder name in checkpoints/
+        ckpt_path = args.resume_from
+        if not os.path.exists(ckpt_path):
+            ckpt_path = os.path.join('checkpoints', args.resume_from, 'best_model.pt')
+        
+        if os.path.exists(ckpt_path):
+            print(f"Resuming from checkpoint: {ckpt_path}")
+            state_dict = torch.load(ckpt_path, map_location=DEVICE)
+            model.load_state_dict(state_dict)
+        else:
+            print(f"ERROR: Checkpoint file '{ckpt_path}' not found!")
+            sys.exit(1)
+
     # Loss
     criterion = EHRLoss(
         pos_weight_mortality   = torch.tensor([pw_mort],  dtype=torch.float32).to(DEVICE),
@@ -463,7 +502,7 @@ if __name__ == '__main__':
 
     # Train
     start_time = time.time()
-    history = train(model, train_loader, val_loader, criterion, optimizer, scheduler)
+    history = train(model, train_loader, val_loader, criterion, optimizer, scheduler, start_epoch=args.start_epoch)
     end_time = time.time()
     
     run_model_time = end_time - start_time
@@ -497,6 +536,7 @@ if __name__ == '__main__':
         drug_to_idx     = drug_to_idx,
         patient_cache   = patient_cache,
         admission_cache = admission_cache,
+        max_len         = MAX_LEN,
     )
     test_loader = DataLoader(
         test_dataset, batch_size=BATCH_SIZE, shuffle=False,
