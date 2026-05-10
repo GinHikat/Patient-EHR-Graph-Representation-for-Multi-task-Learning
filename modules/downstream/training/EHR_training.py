@@ -64,7 +64,11 @@ DRUG_VOCAB_PATH      = os.path.join(downstream_data_path, 'top50_drug_vocab.json
 DRUG_WEIGHTS_PATH    = os.path.join(downstream_data_path, 'drug_rec_pos_weights.npy')
 
 run_time_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+ablation_mode = os.environ.get("ABLATION_MODE")
 config_str = f"{args.model_type}_bs{args.batch_size}_lr{args.lr}_ep{args.epochs}"
+if ablation_mode:
+    config_str = f"ablation_{ablation_mode}_{config_str}"
+
 CHECKPOINT_DIR = os.path.join('checkpoints', f"{config_str}_{run_time_str}")
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 
@@ -414,6 +418,7 @@ if __name__ == '__main__':
         patient_cache   = patient_cache,
         admission_cache = admission_cache,
         max_len         = MAX_LEN,
+        ablation_mode   = ablation_mode,
     )
     val_dataset = EHRDataset(
         admissions_df   = val_df,
@@ -424,6 +429,7 @@ if __name__ == '__main__':
         patient_cache   = patient_cache,
         admission_cache = admission_cache,
         max_len         = MAX_LEN,
+        ablation_mode   = ablation_mode,
     )
 
     MAX_LEN = 512 # Cap long timelines for Transformer O(T^2) efficiency

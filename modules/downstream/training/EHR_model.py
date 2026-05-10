@@ -58,6 +58,7 @@ class EHRDataset(Dataset):
         patient_cache,
         admission_cache,
         max_len=None,
+        ablation_mode=None,
     ):
         self.timeline_dir    = Path(timeline_dir)
         self.admission_nodes = admission_nodes
@@ -66,6 +67,7 @@ class EHRDataset(Dataset):
         self.patient_cache   = patient_cache
         self.admission_cache = admission_cache
         self.max_len         = max_len
+        self.ablation_mode   = ablation_mode
 
         # One row per admission — drop rows with missing critical labels
         df = admissions_df.copy()
@@ -128,6 +130,22 @@ class EHRDataset(Dataset):
         emb = emb[:discharge_pos + 1]
         dt  = dt[:discharge_pos + 1]
 
+        # ─── ABLATION: Causal Slicing & Modality ───────────────────
+        if self.ablation_mode == 'no_last_note':
+            # Remove the very last note (potential leakage)
+            emb = emb[:-1]
+            dt  = dt[:-1]
+        elif self.ablation_mode == 'first_48h':
+            # Calculate cumulative time and keep only notes within first 2 days
+            cum_time = np.cumsum(dt)
+            mask = cum_time <= 2.0 # Assuming dt is in days
+            emb = emb[mask]
+            dt  = dt[mask]
+        elif self.ablation_mode == 'static_only':
+            # Zero out the entire timeline to test static context only
+            emb = np.zeros_like(emb)
+        # ──────────────────────────────────────────────────────────
+
         # Causal capping: keep the MOST RECENT max_len notes before discharge
         if self.max_len is not None and len(emb) > self.max_len:
             emb = emb[-self.max_len:]
@@ -137,13 +155,17 @@ class EHRDataset(Dataset):
         dt  = dt.copy()
 
         # Static vectors from precomputed cache 
-        patient_vec = self.patient_cache.get(pid)
-        if patient_vec is None and pid.isdigit():
-            patient_vec = self.patient_cache.get(int(pid))
+        if self.ablation_mode == 'no_static':
+            patient_vec = torch.zeros(64)
+            admission_vec = torch.zeros(64)
+        else:
+            patient_vec = self.patient_cache.get(pid)
+            if patient_vec is None and pid.isdigit():
+                patient_vec = self.patient_cache.get(int(pid))
 
-        admission_vec = self.admission_cache.get(adm_id)
-        if admission_vec is None and adm_id.isdigit():
-            admission_vec = self.admission_cache.get(int(adm_id))
+            admission_vec = self.admission_cache.get(adm_id)
+            if admission_vec is None and adm_id.isdigit():
+                admission_vec = self.admission_cache.get(int(adm_id))
 
         if patient_vec is None or admission_vec is None:
             return None
@@ -185,6 +207,7 @@ class EHRDataset(Dataset):
             'drug_rec':      torch.tensor(drug_rec,      dtype=torch.float32),  # (50,)
             'adm_id':        adm_id,
             'pid':           pid,
+            'ablation_mode': self.ablation_mode,
         }
 
 ## Helper functions
@@ -222,6 +245,7 @@ def ehr_collate_fn(batch):
         'drug_rec':      torch.stack([b['drug_rec']      for b in batch]),      # (B, 50)
         'adm_ids':       [b['adm_id'] for b in batch],
         'pids':          [b['pid']    for b in batch],
+        'ablation_mode': batch[0].get('ablation_mode'),
     }
 # Models
 EMBED_DIM   = 128
@@ -320,8 +344,11 @@ class EHRTransformer(nn.Module):
         admission_vec = batch['admission_vec']  # (B, 64)
 
         # 1. Temporal Decay (Learnable exponential decay)
-        lam = torch.nn.functional.softplus(self.log_lambda)
-        decay = torch.exp(-lam * dt).unsqueeze(-1)
+        if batch.get('ablation_mode') == 'no_dt_decay':
+            decay = torch.ones_like(dt).unsqueeze(-1)
+        else:
+            lam = torch.nn.functional.softplus(self.log_lambda)
+            decay = torch.exp(-lam * dt).unsqueeze(-1)
         emb   = emb * decay
 
         # 2. Project clinical embeddings + add Time Embeddings
@@ -368,6 +395,7 @@ class EHRTransformer(nn.Module):
             'readmission': self.head_readmission(shared),
             'progression': self.head_progression(shared),
             'drug_rec':    self.head_drug_rec(shared),
+            'shared_repr': shared_repr # For AC-TPC clustering
         }
 
 class EHRModel(nn.Module):
@@ -667,5 +695,44 @@ class EHRLoss(nn.Module):
 #     for k, v in loss_dict.items():
 #         print(f"  {k}: {v:.4f}")
 
+
 #     assert not torch.isnan(total_loss), "NaN in loss!"
-#     print("\nEHRModel OK ✓")
+
+# ─── Graph Components ──────────────────────────────────────────
+class ClinicalGAT(nn.Module):
+    """
+    Message Passing layer for EHR Graphs.
+    Aggregates Labs, OMR, and Admission embeddings into a unified state.
+    """
+    def __init__(self, feature_dim=128, heads=4):
+        super().__init__()
+        self.feature_dim = feature_dim
+        self.heads = heads
+        self.head_dim = feature_dim // heads
+        
+        self.q = nn.Linear(feature_dim, feature_dim)
+        self.k = nn.Linear(feature_dim, feature_dim)
+        self.v = nn.Linear(feature_dim, feature_dim)
+        
+        self.out_proj = nn.Linear(feature_dim, feature_dim)
+        self.ln = nn.LayerNorm(feature_dim)
+        
+    def forward(self, nodes):
+        # nodes: (Batch, N_nodes, feature_dim)
+        # Simplified GAT using Scaled Dot-Product Attention
+        b, n, c = nodes.shape
+        
+        q = self.q(nodes).view(b, n, self.heads, self.head_dim).transpose(1, 2)
+        k = self.k(nodes).view(b, n, self.heads, self.head_dim).transpose(1, 2)
+        v = self.v(nodes).view(b, n, self.heads, self.head_dim).transpose(1, 2)
+        
+        # Attention scores (B, Heads, N, N)
+        attn = (q @ k.transpose(-2, -1)) / (self.head_dim ** 0.5)
+        attn = torch.softmax(attn, dim=-1)
+        
+        out = (attn @ v).transpose(1, 2).reshape(b, n, c)
+        out = self.ln(nodes + self.out_proj(out))
+        return out
+
+# ─── End Graph Components ──────────────────────────────────────
+
