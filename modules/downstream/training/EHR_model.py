@@ -130,11 +130,14 @@ class EHRDataset(Dataset):
         emb = emb[:discharge_pos + 1]
         dt  = dt[:discharge_pos + 1]
 
-        # ─── ABLATION: Causal Slicing & Modality ───────────────────
-        if self.ablation_mode == 'no_last_note':
-            # Remove the very last note (potential leakage)
-            emb = emb[:-1]
-            dt  = dt[:-1]
+        #─ ABLATION: Causal Slicing & Modality─
+        if self.ablation_mode == 'last_24h':
+            # Keep only notes from the FINAL 24 hours of the stay
+            cum_time = np.cumsum(dt)
+            total_time = cum_time[-1]
+            mask = cum_time >= (total_time - 1.0) # 1.0 day = 24h
+            emb = emb[mask]
+            dt  = dt[mask]
         elif self.ablation_mode == 'first_48h':
             # Calculate cumulative time and keep only notes within first 2 days
             cum_time = np.cumsum(dt)
@@ -144,7 +147,19 @@ class EHRDataset(Dataset):
         elif self.ablation_mode == 'static_only':
             # Zero out the entire timeline to test static context only
             emb = np.zeros_like(emb)
-        # ──────────────────────────────────────────────────────────
+        elif self.ablation_mode == 'no_labs':
+            # Zero out only LAB events
+            emb = emb.copy() # Make copy to allow modification
+            for i, entry in enumerate(meta[:len(emb)]):
+                if entry.get('type') == 'LAB':
+                    emb[i] = 0
+        elif self.ablation_mode == 'no_omr':
+            # Zero out only OMR events
+            emb = emb.copy()
+            for i, entry in enumerate(meta[:len(emb)]):
+                if entry.get('type') == 'OMR':
+                    emb[i] = 0
+        #
 
         # Causal capping: keep the MOST RECENT max_len notes before discharge
         if self.max_len is not None and len(emb) > self.max_len:
@@ -155,8 +170,14 @@ class EHRDataset(Dataset):
         dt  = dt.copy()
 
         # Static vectors from precomputed cache 
-        if self.ablation_mode == 'no_static':
+        if self.ablation_mode == 'no_static' or self.ablation_mode == 'static_only':
             patient_vec = torch.zeros(64)
+            admission_vec = torch.zeros(64)
+        elif self.ablation_mode == 'no_patient':
+            patient_vec = torch.zeros(64)
+            admission_vec = self.admission_cache.get(adm_id)
+        elif self.ablation_mode == 'no_admission':
+            patient_vec = self.patient_cache.get(pid)
             admission_vec = torch.zeros(64)
         else:
             patient_vec = self.patient_cache.get(pid)
@@ -298,8 +319,10 @@ class EHRTransformer(nn.Module):
         n_drugs: int     = N_DRUGS,
         dropout: float   = 0.1,
         lambda_init: float = 0.1,
+        target_task: str = 'all'
     ):
         super().__init__()
+        self.target_task = target_task
 
         self.log_lambda = nn.Parameter(torch.tensor(lambda_init).log())
 
@@ -330,11 +353,16 @@ class EHRTransformer(nn.Module):
             nn.Dropout(dropout),
         )
 
-        self.head_mortality   = nn.Linear(PROJ_DIM, 1)
-        self.head_los         = nn.Linear(PROJ_DIM, 1)
-        self.head_readmission = nn.Linear(PROJ_DIM, 1)
-        self.head_progression = nn.Linear(PROJ_DIM, n_diagnoses)
-        self.head_drug_rec    = nn.Linear(PROJ_DIM, n_drugs)
+        if target_task in ['all', 'mortality']:
+            self.head_mortality   = nn.Linear(PROJ_DIM, 1)
+        if target_task in ['all', 'los_7d']:
+            self.head_los         = nn.Linear(PROJ_DIM, 1)
+        if target_task in ['all', 'readmission']:
+            self.head_readmission = nn.Linear(PROJ_DIM, 1)
+        if target_task in ['all', 'progression']:
+            self.head_progression = nn.Linear(PROJ_DIM, n_diagnoses)
+        if target_task in ['all', 'drug_rec']:
+            self.head_drug_rec    = nn.Linear(PROJ_DIM, n_drugs)
 
     def forward(self, batch):
         emb           = batch['emb']            # (B, T, 128)
@@ -343,7 +371,7 @@ class EHRTransformer(nn.Module):
         patient_vec   = batch['patient_vec']    # (B, 64)
         admission_vec = batch['admission_vec']  # (B, 64)
 
-        # 1. Temporal Decay (Learnable exponential decay)
+        # Temporal Decay (Learnable exponential decay)
         if batch.get('ablation_mode') == 'no_dt_decay':
             decay = torch.ones_like(dt).unsqueeze(-1)
         else:
@@ -351,29 +379,34 @@ class EHRTransformer(nn.Module):
             decay = torch.exp(-lam * dt).unsqueeze(-1)
         emb   = emb * decay
 
-        # 2. Project clinical embeddings + add Time Embeddings
+        # Project clinical embeddings + add Time Embeddings
         x = self.input_proj(emb)                # (B, T, 256)
-        x = x + self.time_encoder(dt)           # Inject continuous time information
+        x += self.time_encoder(dt)           # Inject continuous time information
         
-        # 3. Project Static Contexts
+        # Project Static Contexts
         p_tok = self.static_proj(patient_vec).unsqueeze(1)    # (B, 1, 256)
         a_tok = self.static_proj(admission_vec).unsqueeze(1)  # (B, 1, 256)
 
-        # 4. Positional Encoding (Absolute sequence position)
+        # Positional Encoding (Absolute sequence position)
         x = self.pos_encoder(x)
 
-        # 5. Prepend Static Context Tokens
+        # Prepend Static Context Tokens
         x_full = torch.cat([p_tok, a_tok, x], dim=1) # (B, T+2, 256)
         
-        # 5. Masking
+        # Masking
         B, T_full, _ = x_full.shape
         # Adjust mask to account for 2 prepended tokens (which are never masked)
         mask = torch.zeros((B, T_full), dtype=torch.bool, device=x.device)
         for i, length in enumerate(lengths):
             mask[i, length+2:] = True
         
-        # 6. Transformer Pass
-        trans_out = self.transformer(x_full, src_key_padding_mask=mask)
+        # Transformer or MLP Pass
+        if batch.get('ablation_mode') == 'no_temporal':
+            # BAG OF EVENTS ABLATION: Ignore order/attention, just mean pool
+            # x_full: (B, T+2, HIDDEN_SIZE)
+            trans_out = x_full 
+        else:
+            trans_out = self.transformer(x_full, src_key_padding_mask=mask)
 
         # 7. Hybrid Global Representation
         # Use the Patient_Token (index 0) as it has now attended to everything
@@ -384,19 +417,31 @@ class EHRTransformer(nn.Module):
         
         h_global = trans_out[:, 0] # The evolved Patient Token
         
-        # Combine global context and final state
-        shared_repr = (h_global + h_discharge) / 2.0
+        if batch.get('ablation_mode') == 'no_temporal':
+            # Mean pool all non-padding tokens
+            # We use the mask to ignore padded positions
+            weights = (~mask).float().unsqueeze(-1) # (B, T+2, 1)
+            shared_repr = (trans_out * weights).sum(dim=1) / weights.sum(dim=1).clamp(min=1.0)
+        else:
+            # Combine global context and final state
+            shared_repr = (h_global + h_discharge) / 2.0
         
         shared = self.proj(shared_repr)
 
-        return {
-            'mortality':   self.head_mortality(shared),
-            'los_7d':      self.head_los(shared),
-            'readmission': self.head_readmission(shared),
-            'progression': self.head_progression(shared),
-            'drug_rec':    self.head_drug_rec(shared),
-            'shared_repr': shared_repr # For AC-TPC clustering
-        }
+        out = {}
+        if self.target_task in ['all', 'mortality']:
+            out['mortality'] = self.head_mortality(shared)
+        if self.target_task in ['all', 'los_7d']:
+            out['los_7d'] = self.head_los(shared)
+        if self.target_task in ['all', 'readmission']:
+            out['readmission'] = self.head_readmission(shared)
+        if self.target_task in ['all', 'progression']:
+            out['progression'] = self.head_progression(shared)
+        if self.target_task in ['all', 'drug_rec']:
+            out['drug_rec'] = self.head_drug_rec(shared)
+        
+        out['shared_repr'] = shared_repr
+        return out
 
 class EHRModel(nn.Module):
     """
@@ -414,8 +459,10 @@ class EHRModel(nn.Module):
         n_drugs: int       = N_DRUGS,       # ← NEW
         dropout: float     = 0.1,
         lambda_init: float = 0.1,
+        target_task: str   = 'all'
     ):
         super().__init__()
+        self.target_task = target_task
 
         # Δt decay parameter — learned scalar
         # emb_t = emb_t * exp(-λ * Δt)
@@ -443,11 +490,17 @@ class EHRModel(nn.Module):
         )
 
         # Prediction heads — all output raw logits, sigmoid/BCE applied in loss
-        self.head_mortality   = nn.Linear(PROJ_DIM, 1)
-        self.head_los         = nn.Linear(PROJ_DIM, 1)
-        self.head_readmission = nn.Linear(PROJ_DIM, 1)
-        self.head_progression = nn.Linear(PROJ_DIM, n_diagnoses)
-        self.head_drug_rec    = nn.Linear(PROJ_DIM, n_drugs)   # ← NEW
+        # Prediction heads
+        if target_task in ['all', 'mortality']:
+            self.head_mortality   = nn.Linear(PROJ_DIM, 1)
+        if target_task in ['all', 'los_7d']:
+            self.head_los         = nn.Linear(PROJ_DIM, 1)
+        if target_task in ['all', 'readmission']:
+            self.head_readmission = nn.Linear(PROJ_DIM, 1)
+        if target_task in ['all', 'progression']:
+            self.head_progression = nn.Linear(PROJ_DIM, n_diagnoses)
+        if target_task in ['all', 'drug_rec']:
+            self.head_drug_rec    = nn.Linear(PROJ_DIM, n_drugs)
 
     def forward(self, batch):
         """
@@ -523,13 +576,55 @@ class EHRModel(nn.Module):
             print(f"  - admission_vec max/min: {admission_vec.max().item():.2f}/{admission_vec.min().item():.2f}")
 
         # 5 prediction heads
-        return {
-            'mortality':   self.head_mortality(shared),    # (B, 1)
-            'los_7d':      self.head_los(shared),          # (B, 1)
-            'readmission': self.head_readmission(shared),  # (B, 1)
-            'progression': self.head_progression(shared),  # (B, 200)
-            'drug_rec':    self.head_drug_rec(shared),     # (B, 50)   ← NEW
-        }
+        out = {}
+        if self.target_task in ['all', 'mortality']:
+            out['mortality'] = self.head_mortality(shared)
+        if self.target_task in ['all', 'los_7d']:
+            out['los_7d'] = self.head_los(shared)
+        if self.target_task in ['all', 'readmission']:
+            out['readmission'] = self.head_readmission(shared)
+        if self.target_task in ['all', 'progression']:
+            out['progression'] = self.head_progression(shared)
+        if self.target_task in ['all', 'drug_rec']:
+            out['drug_rec'] = self.head_drug_rec(shared)
+        
+        return out
+
+# Graph Components
+class ClinicalGAT(nn.Module):
+    """
+    Message Passing layer for EHR Graphs.
+    Aggregates Labs, OMR, and Admission embeddings into a unified state.
+    """
+    def __init__(self, feature_dim=128, heads=4):
+        super().__init__()
+        self.feature_dim = feature_dim
+        self.heads = heads
+        self.head_dim = feature_dim // heads
+        
+        self.q = nn.Linear(feature_dim, feature_dim)
+        self.k = nn.Linear(feature_dim, feature_dim)
+        self.v = nn.Linear(feature_dim, feature_dim)
+        
+        self.out_proj = nn.Linear(feature_dim, feature_dim)
+        self.ln = nn.LayerNorm(feature_dim)
+        
+    def forward(self, nodes):
+        # nodes: (Batch, N_nodes, feature_dim)
+        # Simplified GAT using Scaled Dot-Product Attention
+        b, n, c = nodes.shape
+        
+        q = self.q(nodes).view(b, n, self.heads, self.head_dim).transpose(1, 2)
+        k = self.k(nodes).view(b, n, self.heads, self.head_dim).transpose(1, 2)
+        v = self.v(nodes).view(b, n, self.heads, self.head_dim).transpose(1, 2)
+        
+        # Attention scores (B, Heads, N, N)
+        attn = (q @ k.transpose(-2, -1)) / (self.head_dim ** 0.5)
+        attn = torch.softmax(attn, dim=-1)
+        
+        out = (attn @ v).transpose(1, 2).reshape(b, n, c)
+        out = self.ln(nodes + self.out_proj(out))
+        return out
 
 # Loss function
 class EHRLoss(nn.Module):
@@ -605,56 +700,59 @@ class EHRLoss(nn.Module):
             total_loss : scalar
             loss_dict  : {task: scalar} for logging
         """
-        labels_mort  = batch['mortality'].unsqueeze(1)    # (B, 1)
-        labels_los   = batch['los_7d'].unsqueeze(1)       # (B, 1)
-        labels_readm = batch['readmission'].unsqueeze(1)  # (B, 1)
-        labels_prog  = batch['progression']               # (B, 200)
-        labels_drug  = batch['drug_rec']                  # (B, 50)   ← NEW
+        total = 0.0
+        loss_dict = {'total': 0.0}
 
         # Mortality
-        loss_mort = self.crit_mortality(logits['mortality'], labels_mort)
+        if 'mortality' in logits:
+            labels_mort = batch['mortality'].unsqueeze(1)
+            loss_mort = self.crit_mortality(logits['mortality'], labels_mort)
+            total += self.w_mortality * loss_mort
+            loss_dict['mortality'] = loss_mort.item()
+        else:
+            loss_dict['mortality'] = 0.0
 
         # LOS
-        loss_los = self.crit_los(logits['los_7d'], labels_los)
-
-        # Readmission — mask missing labels (-1.0)
-        readm_mask = (labels_readm >= 0)   # (B, 1)
-        if readm_mask.any():
-            loss_readm = self.crit_readmission(
-                logits['readmission'][readm_mask],
-                labels_readm[readm_mask]
-            )
+        if 'los_7d' in logits:
+            labels_los = batch['los_7d'].unsqueeze(1)
+            loss_los = self.crit_los(logits['los_7d'], labels_los)
+            total += self.w_los * loss_los
+            loss_dict['los_7d'] = loss_los.item()
         else:
-            loss_readm = torch.tensor(0.0, device=logits['readmission'].device)
+            loss_dict['los_7d'] = 0.0
 
-        # Progression — mask admissions with no top-200 diagnoses
-        loss_prog = self._masked_multilabel_loss(
-            self.crit_progression, logits['progression'], labels_prog
-        )
+        # Readmission
+        if 'readmission' in logits:
+            labels_readm = batch['readmission'].unsqueeze(1)
+            readm_mask = (labels_readm >= 0)
+            if readm_mask.any():
+                loss_readm = self.crit_readmission(logits['readmission'][readm_mask], labels_readm[readm_mask])
+            else:
+                loss_readm = torch.tensor(0.0, device=logits['readmission'].device)
+            total += self.w_readmission * loss_readm
+            loss_dict['readmission'] = loss_readm.item()
+        else:
+            loss_dict['readmission'] = 0.0
 
-        # Drug rec — mask admissions with no top-50 drugs
-        loss_drug = self._masked_multilabel_loss(
-            self.crit_drug_rec, logits['drug_rec'], labels_drug
-        )
+        # Progression
+        if 'progression' in logits:
+            labels_prog = batch['progression']
+            loss_prog = self._masked_multilabel_loss(self.crit_progression, logits['progression'], labels_prog)
+            total += self.w_progression * loss_prog
+            loss_dict['progression'] = loss_prog.item()
+        else:
+            loss_dict['progression'] = 0.0
 
-        # Weighted total
-        total = (
-            self.w_mortality   * loss_mort  +
-            self.w_los         * loss_los   +
-            self.w_readmission * loss_readm +
-            self.w_progression * loss_prog  +
-            self.w_drug_rec    * loss_drug    # ← NEW
-        )
+        # Drug rec
+        if 'drug_rec' in logits:
+            labels_drug = batch['drug_rec']
+            loss_drug = self._masked_multilabel_loss(self.crit_drug_rec, logits['drug_rec'], labels_drug)
+            total += self.w_drug_rec * loss_drug
+            loss_dict['drug_rec'] = loss_drug.item()
+        else:
+            loss_dict['drug_rec'] = 0.0
 
-        loss_dict = {
-            'total':       total.item(),
-            'mortality':   loss_mort.item(),
-            'los_7d':      loss_los.item(),
-            'readmission': loss_readm.item(),
-            'progression': loss_prog.item(),
-            'drug_rec':    loss_drug.item(),  # ← NEW
-        }
-
+        loss_dict['total'] = total.item() if isinstance(total, torch.Tensor) else total
         return total, loss_dict
 
 
@@ -698,41 +796,5 @@ class EHRLoss(nn.Module):
 
 #     assert not torch.isnan(total_loss), "NaN in loss!"
 
-# ─── Graph Components ──────────────────────────────────────────
-class ClinicalGAT(nn.Module):
-    """
-    Message Passing layer for EHR Graphs.
-    Aggregates Labs, OMR, and Admission embeddings into a unified state.
-    """
-    def __init__(self, feature_dim=128, heads=4):
-        super().__init__()
-        self.feature_dim = feature_dim
-        self.heads = heads
-        self.head_dim = feature_dim // heads
-        
-        self.q = nn.Linear(feature_dim, feature_dim)
-        self.k = nn.Linear(feature_dim, feature_dim)
-        self.v = nn.Linear(feature_dim, feature_dim)
-        
-        self.out_proj = nn.Linear(feature_dim, feature_dim)
-        self.ln = nn.LayerNorm(feature_dim)
-        
-    def forward(self, nodes):
-        # nodes: (Batch, N_nodes, feature_dim)
-        # Simplified GAT using Scaled Dot-Product Attention
-        b, n, c = nodes.shape
-        
-        q = self.q(nodes).view(b, n, self.heads, self.head_dim).transpose(1, 2)
-        k = self.k(nodes).view(b, n, self.heads, self.head_dim).transpose(1, 2)
-        v = self.v(nodes).view(b, n, self.heads, self.head_dim).transpose(1, 2)
-        
-        # Attention scores (B, Heads, N, N)
-        attn = (q @ k.transpose(-2, -1)) / (self.head_dim ** 0.5)
-        attn = torch.softmax(attn, dim=-1)
-        
-        out = (attn @ v).transpose(1, 2).reshape(b, n, c)
-        out = self.ln(nodes + self.out_proj(out))
-        return out
 
-# ─── End Graph Components ──────────────────────────────────────
 

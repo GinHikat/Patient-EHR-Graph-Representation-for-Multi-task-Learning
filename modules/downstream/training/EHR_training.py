@@ -44,6 +44,8 @@ def parse_args():
     parser.add_argument('--threshold', type=float, default=0.6, help='Classification threshold')
     parser.add_argument('--resume_from', type=str, default=None, help='Path to best_model.pt to resume from')
     parser.add_argument('--start_epoch', type=int, default=1, help='Epoch to start from')
+    parser.add_argument('--task', type=str, default='all', choices=['all', 'mortality', 'los_7d', 'readmission', 'progression', 'drug_rec'], help='Target task for independent training')
+    parser.add_argument('--no_pos_weight', action='store_true', help='Use equal loss (no pos_weight) for all classes')
     return parser.parse_args()
 
 args = parse_args()
@@ -70,6 +72,10 @@ if ablation_mode:
     config_str = f"ablation_{ablation_mode}_{config_str}"
 
 CHECKPOINT_DIR = os.path.join('checkpoints', f"{config_str}_{run_time_str}")
+if args.task != 'all':
+    CHECKPOINT_DIR = CHECKPOINT_DIR.replace(config_str, f"{config_str}_task_{args.task}")
+if args.no_pos_weight:
+    CHECKPOINT_DIR = CHECKPOINT_DIR.replace(config_str, f"{config_str}_no_pw")
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 
 # Training hyperparameters from args
@@ -107,40 +113,48 @@ def evaluate(model, loader, criterion, device):
         for batch in tqdm(loader, desc='Evaluating', leave=False):
             if batch is None: continue
             batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
-            logits = model(batch)
-            loss, loss_dict = criterion(logits, batch)
+            
+            with torch.cuda.amp.autocast():
+                logits = model(batch)
+                loss, loss_dict = criterion(logits, batch)
+                
             for k, v in loss_dict.items(): total_loss[k] += v
             n_batches += 1
 
             # Mortality
-            all_logits['mortality'].append(torch.sigmoid(logits['mortality']).squeeze(1).cpu().numpy())
-            all_labels['mortality'].append(batch['mortality'].cpu().numpy())
+            if 'mortality' in logits:
+                all_logits['mortality'].append(torch.sigmoid(logits['mortality']).squeeze(1).cpu().numpy())
+                all_labels['mortality'].append(batch['mortality'].cpu().numpy())
 
             # LOS
-            all_logits['los_7d'].append(torch.sigmoid(logits['los_7d']).squeeze(1).cpu().numpy())
-            all_labels['los_7d'].append(batch['los_7d'].cpu().numpy())
+            if 'los_7d' in logits:
+                all_logits['los_7d'].append(torch.sigmoid(logits['los_7d']).squeeze(1).cpu().numpy())
+                all_labels['los_7d'].append(batch['los_7d'].cpu().numpy())
 
             # Readmission (Mask missing -1 labels)
-            readm_mask = batch['readmission'] >= 0
-            if readm_mask.any():
-                all_logits['readmission'].append(torch.sigmoid(logits['readmission']).squeeze(1)[readm_mask].cpu().numpy())
-                all_labels['readmission'].append(batch['readmission'][readm_mask].cpu().numpy())
+            if 'readmission' in logits:
+                readm_mask = batch['readmission'] >= 0
+                if readm_mask.any():
+                    all_logits['readmission'].append(torch.sigmoid(logits['readmission']).squeeze(1)[readm_mask].cpu().numpy())
+                    all_labels['readmission'].append(batch['readmission'][readm_mask].cpu().numpy())
 
             # Progression (Mask empty samples)
-            prog_mask = batch['progression'].sum(dim=-1) > 0
-            if prog_mask.any():
-                all_logits['progression'].append(torch.sigmoid(logits['progression'])[prog_mask].cpu().numpy())
-                all_labels['progression'].append(batch['progression'][prog_mask].cpu().numpy())
+            if 'progression' in logits:
+                prog_mask = batch['progression'].sum(dim=-1) > 0
+                if prog_mask.any():
+                    all_logits['progression'].append(torch.sigmoid(logits['progression'])[prog_mask].cpu().numpy())
+                    all_labels['progression'].append(batch['progression'][prog_mask].cpu().numpy())
 
             # Drug rec (Mask empty samples)
-            drug_mask = batch['drug_rec'].sum(dim=-1) > 0
-            if drug_mask.any():
-                all_logits['drug_rec'].append(torch.sigmoid(logits['drug_rec'])[drug_mask].cpu().numpy())
-                all_labels['drug_rec'].append(batch['drug_rec'][drug_mask].cpu().numpy())
+            if 'drug_rec' in logits:
+                drug_mask = batch['drug_rec'].sum(dim=-1) > 0
+                if drug_mask.any():
+                    all_logits['drug_rec'].append(torch.sigmoid(logits['drug_rec'])[drug_mask].cpu().numpy())
+                    all_labels['drug_rec'].append(batch['drug_rec'][drug_mask].cpu().numpy())
 
     metrics = {}
 
-    # ── Binary tasks (Mortality, LOS, Readmission) ──────────────────
+    # Binary tasks (Mortality, LOS, Readmission)
     for task in ['mortality', 'los_7d', 'readmission']:
         if len(all_labels[task]) == 0:
             metrics[task] = metrics[f'{task}_aupr'] = metrics[f'{task}_mAP'] = 0.0
@@ -166,7 +180,7 @@ def evaluate(model, loader, criterion, device):
         metrics[f'{task}_recall']    = float(r)
         metrics[f'{task}_f1']        = float(f1)
 
-    # ── Multilabel helper (Progression, Drug Rec) ───────────────────
+    # Multilabel helper (Progression, Drug Rec)
     def multilabel_metrics(labels_list, logits_list, prefix):
         if len(labels_list) == 0:
             metrics[prefix] = metrics[f'{prefix}_aupr'] = metrics[f'{prefix}_mAP'] = metrics[f'{prefix}_f1'] = 0.0
@@ -196,7 +210,8 @@ def evaluate(model, loader, criterion, device):
     multilabel_metrics(all_labels['drug_rec'], all_logits['drug_rec'], 'drug_rec')
 
     # Mean AUROC for early stopping
-    metrics['mean_auroc'] = float(np.mean([metrics[t] for t in tasks]))
+    available_aurocs = [metrics[t] for t in tasks if len(all_labels[t]) > 0 and t in metrics]
+    metrics['mean_auroc'] = float(np.mean(available_aurocs)) if available_aurocs else 0.0
     metrics['loss_dict'] = {k: v / max(n_batches, 1) for k, v in total_loss.items()}
 
     return metrics
@@ -217,6 +232,9 @@ def train(
     best_mean_auroc   = 0.0
     epochs_no_improve = 0
     history           = []
+    
+    # Mixed Precision Scaler
+    scaler = torch.cuda.amp.GradScaler()
 
     # Initialize/Clear metrics log file only if starting from scratch
     log_mode = 'w' if start_epoch == 1 else 'a'
@@ -254,33 +272,39 @@ def train(
 
             optimizer.zero_grad()
 
-            logits = model(batch)
-
-            loss, loss_dict = criterion(logits, batch)
+            # Autocast for Mixed Precision
+            with torch.cuda.amp.autocast():
+                logits = model(batch)
+                loss, loss_dict = criterion(logits, batch)
 
             if torch.isnan(loss):
                 print(f"\n[ERROR] NaN Loss detected at Epoch {epoch}, Batch {n_batches}. Skipping.")
                 continue
 
-            loss.backward()
-
+            # Scale loss and backprop
+            scaler.scale(loss).backward()
+            
+            # Unscale for gradient clipping
+            scaler.unscale_(optimizer)
             nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP)
 
-            optimizer.step()
+            # Step and update scaler
+            scaler.step(optimizer)
+            scaler.update()
 
             for k, v in loss_dict.items():
                 train_loss[k] += v
 
             n_batches += 1
 
-            # ── Linear LR Warmup ──────────────────────────────────────
+            # Linear LR Warmup
             if epoch <= 5: # Warmup over first 5 epochs
                 total_steps = 5 * len(train_loader)
                 current_step = (epoch - 1) * len(train_loader) + n_batches
                 lr_scale = min(1., float(current_step) / total_steps)
                 for pg in optimizer.param_groups:
                     pg['lr'] = LR * lr_scale
-            # ──────────────────────────────────────────────────────────
+            #
 
 
             pbar.set_postfix({
@@ -466,9 +490,9 @@ if __name__ == '__main__':
     # Model
     # Model selection
     if args.model_type == 'transformer':
-        model = EHRTransformer().to(DEVICE)
+        model = EHRTransformer(target_task=args.task).to(DEVICE)
     else:
-        model = EHRModel().to(DEVICE)
+        model = EHRModel(target_task=args.task).to(DEVICE)
     
     model.use_gradient_checkpointing = False
     print(f'Model parameters: {sum(p.numel() for p in model.parameters()):,}')
@@ -488,6 +512,12 @@ if __name__ == '__main__':
         else:
             print(f"ERROR: Checkpoint file '{ckpt_path}' not found!")
             sys.exit(1)
+
+    # Pos weights
+    if args.no_pos_weight:
+        pw_mort = pw_los = pw_readm = 1.0
+        prog_weights = torch.ones_like(prog_weights)
+        drug_weights = torch.ones_like(drug_weights)
 
     # Loss
     criterion = EHRLoss(
