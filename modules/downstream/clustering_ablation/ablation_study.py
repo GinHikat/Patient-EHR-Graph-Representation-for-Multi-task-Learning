@@ -44,7 +44,7 @@ if __name__ == "__main__":
     
     experiments = []
     if args.group == 'leakage':
-        experiments = ['last_24h', 'first_48h', 'static_only']
+        experiments = ['last_24h', 'first_48h', 'static_only', 'no_last_event', 'no_future']
     elif args.group == 'static':
         experiments = ['no_static', 'no_patient', 'no_admission']
     elif args.group == 'temporal':
@@ -65,8 +65,11 @@ if __name__ == "__main__":
         experiments = [
             # 'last_24h', 'first_48h', 'static_only', 
             # 'no_static', 'no_patient', 
-            'no_admission',
-            'no_temporal', 'no_labs', 'no_omr'
+            'no_admission', 
+            'no_last_event',
+            'no_temporal', 'no_labs', 
+            'no_omr',
+            
         ]
         for exp in experiments:
             run_experiment(exp, epochs=args.epochs, batch_size=args.batch_size, num_workers=args.num_workers, patience=args.patience)

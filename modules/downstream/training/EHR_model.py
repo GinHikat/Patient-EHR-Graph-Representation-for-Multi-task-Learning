@@ -127,8 +127,9 @@ class EHRDataset(Dataset):
             return None
 
         # Slice and copy to ensure we aren't holding mmap handles in memory
-        emb = emb[:discharge_pos + 1]
-        dt  = dt[:discharge_pos + 1]
+        # We use + 2 to include both the DISCHARGE token and the admission_emb summary
+        emb = emb[:discharge_pos + 2]
+        dt  = dt[:discharge_pos + 2]
 
         #─ ABLATION: Causal Slicing & Modality─
         if self.ablation_mode == 'last_24h':
@@ -159,7 +160,19 @@ class EHRDataset(Dataset):
             for i, entry in enumerate(meta[:len(emb)]):
                 if entry.get('type') == 'OMR':
                     emb[i] = 0
-        #
+        elif self.ablation_mode == 'no_last_event':
+            # Remove only the very last event (the admission_emb summary)
+            if len(emb) > 0:
+                emb = emb[:-1]
+                dt  = dt[:-1]
+        elif self.ablation_mode == 'no_future':
+            # Remove both the DISCHARGE token and the admission_emb summary
+            if len(emb) >= 2:
+                emb = emb[:-2]
+                dt  = dt[:-2]
+            elif len(emb) > 0:
+                emb = emb[:-1]
+                dt  = dt[:-1]
 
         # Causal capping: keep the MOST RECENT max_len notes before discharge
         if self.max_len is not None and len(emb) > self.max_len:
@@ -176,16 +189,20 @@ class EHRDataset(Dataset):
         elif self.ablation_mode == 'no_patient':
             patient_vec = torch.zeros(64)
             admission_vec = self.admission_cache.get(adm_id)
-        elif self.ablation_mode == 'no_admission':
+            if admission_vec is None and str(adm_id).isdigit():
+                admission_vec = self.admission_cache.get(int(adm_id))
+        elif self.ablation_mode == 'no_admission' or self.ablation_mode == 'no_future':
             patient_vec = self.patient_cache.get(pid)
+            if patient_vec is None and str(pid).isdigit():
+                patient_vec = self.patient_cache.get(int(pid))
             admission_vec = torch.zeros(64)
         else:
             patient_vec = self.patient_cache.get(pid)
-            if patient_vec is None and pid.isdigit():
+            if patient_vec is None and str(pid).isdigit():
                 patient_vec = self.patient_cache.get(int(pid))
 
             admission_vec = self.admission_cache.get(adm_id)
-            if admission_vec is None and adm_id.isdigit():
+            if admission_vec is None and str(adm_id).isdigit():
                 admission_vec = self.admission_cache.get(int(adm_id))
 
         if patient_vec is None or admission_vec is None:
@@ -408,7 +425,7 @@ class EHRTransformer(nn.Module):
         else:
             trans_out = self.transformer(x_full, src_key_padding_mask=mask)
 
-        # 7. Hybrid Global Representation
+        # Hybrid Global Representation
         # Use the Patient_Token (index 0) as it has now attended to everything
         # Plus the last clinical token (discharge)
         idx_discharge = (lengths + 1).clamp(min=1) # +1 because of 2 prepended tokens
