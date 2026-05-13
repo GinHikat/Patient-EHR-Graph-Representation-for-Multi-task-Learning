@@ -29,7 +29,7 @@ from shared_functions.global_functions import query_neo4j
 load_dotenv() 
 
 data_dir = os.getenv('DATA_DIR')
-base_data_dir = os.path.join(project_root, 'Thesis', 'data')
+base_data_dir = os.path.join(project_root, 'data')
 downstream_data_path = os.path.join(base_data_dir, 'downstream')
 
 with open(os.path.join(downstream_data_path, 'admission_nodes.json'), 'r') as f:

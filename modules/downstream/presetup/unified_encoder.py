@@ -8,7 +8,7 @@ if project_root not in sys.path:
     sys.path.append(project_root)
 
 class LabPanelEncoder(nn.Module):
-    def __init__(self, vocab_size=165, hidden_dim=256, output_dim=128, dropout=0.1):
+    def __init__(self, vocab_size=170, hidden_dim=256, output_dim=128, dropout=0.1):
         super().__init__()
         self.encoder = nn.Sequential(
             nn.Linear(vocab_size * 2, hidden_dim),  # [val(165) + mask(165)] = 330-dim
