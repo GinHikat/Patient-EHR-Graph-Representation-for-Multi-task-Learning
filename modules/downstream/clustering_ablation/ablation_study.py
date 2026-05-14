@@ -65,7 +65,7 @@ if __name__ == "__main__":
         experiments = [
             # 'last_24h', 'first_48h', 'static_only', 
             # 'no_static', 'no_patient', 
-            'no_admission', 
+            # 'no_admission', 
             'no_last_event',
             'no_temporal', 'no_labs', 
             'no_omr',

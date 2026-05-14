@@ -29,11 +29,11 @@ if project_root not in sys.path:
 if current_dir not in sys.path:
     sys.path.append(current_dir)
 
-from EHR_model import EHRDataset, ehr_collate_fn, EHRModel, EHRTransformer, EHRLoss
+from EHR_model import EHRDataset, ehr_collate_fn, EHRModel, EHRTransformer, EHRTransformerBase, EHRLoss
 
 def parse_args():
     parser = argparse.ArgumentParser(description='EHR Training')
-    parser.add_argument('--model_type', type=str, default='lstm', choices=['lstm', 'transformer'], help='Model type: lstm or transformer')
+    parser.add_argument('--model_type', type=str, default='lstm', choices=['lstm', 'transformer', 'transformer_base'], help='Model type: lstm, transformer, or transformer_base')
     parser.add_argument('--batch_size', type=int, default=64, help='Batch size')
     parser.add_argument('--lr', type=float, default=1e-4, help='Learning rate')
     parser.add_argument('--weight_decay', type=float, default=1e-4, help='Weight decay')
@@ -491,6 +491,8 @@ if __name__ == '__main__':
     # Model selection
     if args.model_type == 'transformer':
         model = EHRTransformer(target_task=args.task).to(DEVICE)
+    elif args.model_type == 'transformer_base':
+        model = EHRTransformerBase(target_task=args.task).to(DEVICE)
     else:
         model = EHRModel(target_task=args.task).to(DEVICE)
     

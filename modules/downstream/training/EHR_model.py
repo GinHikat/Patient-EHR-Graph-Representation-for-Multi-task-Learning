@@ -347,8 +347,14 @@ class EHRTransformer(nn.Module):
         self.input_proj = nn.Linear(EMBED_DIM, HIDDEN_SIZE)
         self.static_proj = nn.Linear(STATIC_DIM, HIDDEN_SIZE) 
         
-        self.time_encoder = TimeEncoding(HIDDEN_SIZE)
-        self.pos_encoder = PositionalEncoding(HIDDEN_SIZE)
+        # LSTM replaces Sinusoidal Positional Encoding
+        self.pos_lstm = nn.LSTM(
+            input_size=HIDDEN_SIZE,
+            hidden_size=HIDDEN_SIZE,
+            num_layers=2,
+            batch_first=True,
+            dropout=dropout if dropout > 0 else 0
+        )
         
         # Transformer layers
         encoder_layer = nn.TransformerEncoderLayer(
@@ -372,14 +378,19 @@ class EHRTransformer(nn.Module):
 
         if target_task in ['all', 'mortality']:
             self.head_mortality   = nn.Linear(PROJ_DIM, 1)
+            self.alpha_mortality  = nn.Parameter(torch.tensor(0.0))
         if target_task in ['all', 'los_7d']:
             self.head_los         = nn.Linear(PROJ_DIM, 1)
+            self.alpha_los        = nn.Parameter(torch.tensor(0.0))
         if target_task in ['all', 'readmission']:
             self.head_readmission = nn.Linear(PROJ_DIM, 1)
+            self.alpha_readm      = nn.Parameter(torch.tensor(0.0))
         if target_task in ['all', 'progression']:
             self.head_progression = nn.Linear(PROJ_DIM, n_diagnoses)
+            self.alpha_prog       = nn.Parameter(torch.tensor(0.0))
         if target_task in ['all', 'drug_rec']:
-            self.head_drug_rec    = nn.Linear(PROJ_DIM, n_drugs)
+            self.head_drug_rec    = nn.Linear(PROJ_DIM + n_diagnoses, n_drugs)
+            self.alpha_drug       = nn.Parameter(torch.tensor(0.0))
 
     def forward(self, batch):
         emb           = batch['emb']            # (B, T, 128)
@@ -396,18 +407,24 @@ class EHRTransformer(nn.Module):
             decay = torch.exp(-lam * dt).unsqueeze(-1)
         emb   = emb * decay
 
-        # Project clinical embeddings + add Time Embeddings
+        # 2. Project clinical embeddings
         x = self.input_proj(emb)                # (B, T, 256)
-        x += self.time_encoder(dt)           # Inject continuous time information
         
-        # Project Static Contexts
+        # 3. LSTM-based Sequential Encoding (Replaces Positional/Time Encoding)
+        # We pack the sequence to ignore padding during the LSTM pass
+        packed_x = torch.nn.utils.rnn.pack_padded_sequence(
+            x, lengths.cpu(), batch_first=True, enforce_sorted=False
+        )
+        lstm_out_packed, _ = self.pos_lstm(packed_x)
+        x, _ = torch.nn.utils.rnn.pad_packed_sequence(
+            lstm_out_packed, batch_first=True, total_length=emb.shape[1]
+        )                                       # (B, T, 256)
+
+        # 4. Project Static Contexts
         p_tok = self.static_proj(patient_vec).unsqueeze(1)    # (B, 1, 256)
         a_tok = self.static_proj(admission_vec).unsqueeze(1)  # (B, 1, 256)
 
-        # Positional Encoding (Absolute sequence position)
-        x = self.pos_encoder(x)
-
-        # Prepend Static Context Tokens
+        # 5. Prepend Static Context Tokens
         x_full = torch.cat([p_tok, a_tok, x], dim=1) # (B, T+2, 256)
         
         # Masking
@@ -434,16 +451,138 @@ class EHRTransformer(nn.Module):
         
         h_global = trans_out[:, 0] # The evolved Patient Token
         
-        if batch.get('ablation_mode') == 'no_temporal':
-            # Mean pool all non-padding tokens
-            # We use the mask to ignore padded positions
-            weights = (~mask).float().unsqueeze(-1) # (B, T+2, 1)
-            shared_repr = (trans_out * weights).sum(dim=1) / weights.sum(dim=1).clamp(min=1.0)
-        else:
-            # Combine global context and final state
-            shared_repr = (h_global + h_discharge) / 2.0
+
+        out = {}
         
-        shared = self.proj(shared_repr)
+        # Helper for task-specific pooling
+        def get_task_repr(alpha_param):
+            a = torch.sigmoid(alpha_param)
+            pooled = a * h_global + (1 - a) * h_discharge
+            return self.proj(pooled)
+
+        # 1. Mortality
+        if self.target_task in ['all', 'mortality']:
+            s_mort = get_task_repr(self.alpha_mortality)
+            out['mortality'] = self.head_mortality(s_mort)
+        
+        # 2. LOS
+        if self.target_task in ['all', 'los_7d']:
+            s_los = get_task_repr(self.alpha_los)
+            out['los_7d'] = self.head_los(s_los)
+            
+        # 3. Readmission
+        if self.target_task in ['all', 'readmission']:
+            s_readm = get_task_repr(self.alpha_readm)
+            out['readmission'] = self.head_readmission(s_readm)
+            
+        # 4. Progression (Diagnoses)
+        prog_logits = None
+        if self.target_task in ['all', 'progression', 'drug_rec']:
+            s_prog = get_task_repr(self.alpha_prog)
+            prog_logits = self.head_progression(s_prog)
+            if self.target_task in ['all', 'progression']:
+                out['progression'] = prog_logits
+        
+        # 5. Drug Recommendation (Dependent on Progression)
+        if self.target_task in ['all', 'drug_rec']:
+            s_drug = get_task_repr(self.alpha_drug)
+            # Linkage: Concat shared representation with Diagnosis Logits
+            # We use detach() on prog_logits if we don't want Drug gradients to affect Diagnosis weights
+            # But usually, joint training is better.
+            combined_drug = torch.cat([s_drug, prog_logits], dim=-1)
+            out['drug_rec'] = self.head_drug_rec(combined_drug)
+        
+        out['shared_repr'] = (h_global + h_discharge) / 2.0 # For backward compatibility in logs
+        return out
+
+class EHRTransformerBase(nn.Module):
+    """
+    Original Transformer-based sequence modeling for EHR data.
+    Uses late fusion: concatenates static vectors AFTER the transformer pass.
+    Matches the state_dict in checkpoints/transformer_base/best_model.pt
+    """
+    def __init__(
+        self,
+        n_diagnoses: int = N_DIAGNOSES,
+        n_drugs: int     = N_DRUGS,
+        dropout: float   = 0.1,
+        lambda_init: float = 0.1,
+        target_task: str = 'all'
+    ):
+        super().__init__()
+        self.target_task = target_task
+
+        # Δt decay parameter — learned scalar
+        self.log_lambda = nn.Parameter(torch.tensor(lambda_init).log())
+
+        # Projections
+        self.input_proj = nn.Linear(EMBED_DIM, HIDDEN_SIZE)
+        
+        self.pos_encoder = PositionalEncoding(HIDDEN_SIZE)
+        
+        # Transformer layers (3 layers based on checkpoint)
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=HIDDEN_SIZE,
+            nhead=8,
+            dim_feedforward=HIDDEN_SIZE * 4,
+            dropout=dropout,
+            batch_first=True,
+            activation='gelu'
+        )
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=3)
+
+        # Projection: concat(transformer_out, patient, admission) -> shared repr
+        # 256 (Hidden) + 64 (Patient) + 64 (Admission) = 384
+        concat_dim = HIDDEN_SIZE + STATIC_DIM + STATIC_DIM 
+        self.proj = nn.Sequential(
+            nn.Linear(concat_dim, PROJ_DIM),
+            nn.LayerNorm(PROJ_DIM)
+        )
+
+        if target_task in ['all', 'mortality']:
+            self.head_mortality   = nn.Linear(PROJ_DIM, 1)
+        if target_task in ['all', 'los_7d']:
+            self.head_los         = nn.Linear(PROJ_DIM, 1)
+        if target_task in ['all', 'readmission']:
+            self.head_readmission = nn.Linear(PROJ_DIM, 1)
+        if target_task in ['all', 'progression']:
+            self.head_progression = nn.Linear(PROJ_DIM, n_diagnoses)
+        if target_task in ['all', 'drug_rec']:
+            self.head_drug_rec    = nn.Linear(PROJ_DIM, n_drugs)
+
+    def forward(self, batch):
+        emb           = batch['emb']            # (B, T, 128)
+        dt            = batch['dt']             # (B, T)
+        lengths       = batch['lengths']        # (B,)
+        patient_vec   = batch['patient_vec']    # (B, 64)
+        admission_vec = batch['admission_vec']  # (B, 64)
+
+        # Temporal Decay
+        lam = torch.nn.functional.softplus(self.log_lambda)
+        decay = torch.exp(-lam * dt).unsqueeze(-1)
+        emb   = emb * decay
+
+        # Project + Positional Encoding
+        x = self.input_proj(emb)                # (B, T, 256)
+        x = self.pos_encoder(x)
+        
+        # Masking
+        B, T, _ = x.shape
+        mask = torch.zeros((B, T), dtype=torch.bool, device=x.device)
+        for i, length in enumerate(lengths):
+            mask[i, length:] = True
+        
+        # Transformer Pass
+        trans_out = self.transformer(x, src_key_padding_mask=mask)
+
+        # Global Representation: Slice at the last real token (DISCHARGE position)
+        idx          = (lengths - 1).clamp(min=0)
+        idx_expanded = idx.view(-1, 1, 1).expand(-1, 1, HIDDEN_SIZE)
+        h_discharge  = trans_out.gather(1, idx_expanded).squeeze(1)  # (B, 256)
+
+        # Late Fusion: Concat static vectors + project
+        combined = torch.cat([h_discharge, patient_vec, admission_vec], dim=-1) # (B, 384)
+        shared = self.proj(combined)   # (B, 128)
 
         out = {}
         if self.target_task in ['all', 'mortality']:
@@ -457,7 +596,6 @@ class EHRTransformer(nn.Module):
         if self.target_task in ['all', 'drug_rec']:
             out['drug_rec'] = self.head_drug_rec(shared)
         
-        out['shared_repr'] = shared_repr
         return out
 
 class EHRModel(nn.Module):
