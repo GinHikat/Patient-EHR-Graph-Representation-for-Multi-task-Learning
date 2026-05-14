@@ -596,6 +596,7 @@ class EHRTransformerBase(nn.Module):
         if self.target_task in ['all', 'drug_rec']:
             out['drug_rec'] = self.head_drug_rec(shared)
         
+        out["shared_repr"] = h_discharge
         return out
 
 class EHRModel(nn.Module):
@@ -743,6 +744,7 @@ class EHRModel(nn.Module):
         if self.target_task in ['all', 'drug_rec']:
             out['drug_rec'] = self.head_drug_rec(shared)
         
+        out["shared_repr"] = h_discharge
         return out
 
 # Graph Components
