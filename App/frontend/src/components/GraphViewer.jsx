@@ -9,11 +9,17 @@ const API_BASE_URL =
 // Predefined high-contrast palette for common EHR and CTD node types
 const TYPE_COLORS = {
   Patient: "#3b82f6", // Blue
-  Condition: "#f43f5e", // Rose/Red (more vibrant)
+  Admission: "#ec4899", // Pink (Encounter/Admission)
+  Result: "#06b6d4", // Cyan (Lab Result)
+  Lab: "#06b6d4", // Cyan (Lab Item)
+  Drug: "#fbbf24", // Amber (Medication/Drug)
+  Diagnosis: "#f43f5e", // Rose/Red (Condition/Disease)
   Disease: "#f43f5e", // Rose/Red
-  Drug: "#fbbf24", // Amber (brighter)
+  Procedure: "#8b5cf6", // Violet (Procedure)
+  ICU: "#a855f7", // Purple (ICU Care)
+  Stay: "#a855f7", // Purple (ICU Stay)
+  Transfer: "#10b981", // Green (Transfers)
   Observation: "#10b981", // Green
-  Procedure: "#8b5cf6", // Violet
   Encounter: "#ec4899", // Pink
   LabResult: "#06b6d4", // Cyan
   Medication: "#f97316", // Orange

@@ -170,13 +170,54 @@ def get_node_by_id(node_id: str, namespace: Optional[str] = None, node_types: Op
            OR toLower(toString(n.title)) CONTAINS toLower($node_id)
         RETURN n LIMIT 20
     }}
-
-    // Post-Search Enrichment: Expand context
     WITH n LIMIT 20
-    OPTIONAL MATCH (n)-[r]-(m)
-    WHERE NOT $is_filtered OR any(l IN labels(m) WHERE l IN $target_labels)
-    RETURN n, r, m
-    LIMIT 300
+
+    // Multi-hop expansion for Patients and Admissions, showing full clinical timeline
+    CALL {{
+        WITH n
+        RETURN n AS source, null AS rel, null AS target
+        
+        UNION
+        
+        WITH n
+        WITH n WHERE "Patient" IN labels(n)
+        MATCH (n)-[r1:ADMISSION]->(a:Admission)
+        RETURN n AS source, r1 AS rel, a AS target
+        
+        UNION
+        
+        WITH n
+        WITH n WHERE "Patient" IN labels(n)
+        MATCH (n)-[:ADMISSION]->(a:Admission)-[r2]->(m)
+        WHERE NOT $is_filtered OR any(l IN labels(m) WHERE l IN $target_labels)
+        RETURN a AS source, r2 AS rel, m AS target
+
+        UNION
+
+        WITH n
+        WITH n WHERE "Admission" IN labels(n)
+        MATCH (p:Patient)-[r1:ADMISSION]->(n)
+        RETURN p AS source, r1 AS rel, n AS target
+        
+        UNION
+        
+        WITH n
+        WITH n WHERE "Admission" IN labels(n)
+        MATCH (n)-[r2]->(m)
+        WHERE NOT $is_filtered OR any(l IN labels(m) WHERE l IN $target_labels)
+        RETURN n AS source, r2 AS rel, m AS target
+
+        UNION
+
+        // Generic fallback for any other node types (1-hop)
+        WITH n
+        WITH n WHERE NOT "Patient" IN labels(n) AND NOT "Admission" IN labels(n)
+        MATCH (n)-[r]-(m)
+        WHERE NOT $is_filtered OR any(l IN labels(m) WHERE l IN $target_labels)
+        RETURN n AS source, r AS rel, m AS target
+    }}
+    RETURN source AS n, rel AS r, target AS m
+    LIMIT 1000
     """
     
     with driver.session() as session:

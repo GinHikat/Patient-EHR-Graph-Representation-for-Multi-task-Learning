@@ -8,7 +8,7 @@ if project_root not in sys.path:
     sys.path.append(project_root)
 
 class LabPanelEncoder(nn.Module):
-    def __init__(self, vocab_size=170, hidden_dim=256, output_dim=128, dropout=0.1):
+    def __init__(self, vocab_size=165, hidden_dim=256, output_dim=128, dropout=0.1):
         super().__init__()
         self.encoder = nn.Sequential(
             nn.Linear(vocab_size * 2, hidden_dim),  # [val(165) + mask(165)] = 330-dim
@@ -88,13 +88,53 @@ class SpecialTokenEncoder(nn.Module):
     def forward(self, token_ids: torch.Tensor) -> torch.Tensor:
         return self.embedding(token_ids)              
 
-class EventEncoder(nn.Module):
-    def __init__(self, vocab_size=170, omr_dim=4, n_special=4, embed_dim=128):
+class ICUEncoder(nn.Module):
+    def __init__(self, num_units=15, output_dim=128):
         super().__init__()
-        self.lab_encoder     = LabPanelEncoder(vocab_size=vocab_size, output_dim=embed_dim)
-        self.omr_encoder     = OMREncoder(input_dim=omr_dim, output_dim=embed_dim)
-        self.special_encoder = SpecialTokenEncoder(n_tokens=n_special, output_dim=embed_dim)
-        self.embed_dim       = embed_dim
+        self.embedding = nn.Embedding(num_units + 1, output_dim, padding_idx=0)
+
+    def forward(self, unit_ids: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            unit_ids: LongTensor (B,) of ICU unit vocabulary indices
+        Returns:
+            (B, output_dim) ICU event embeddings
+        """
+        return self.embedding(unit_ids)
+
+class TransferEncoder(nn.Module):
+    def __init__(self, num_care_units=30, num_types=10, output_dim=128):
+        super().__init__()
+        self.care_unit_emb = nn.Embedding(num_care_units + 1, 64, padding_idx=0)
+        self.type_emb      = nn.Embedding(num_types + 1, 64, padding_idx=0)
+        self.proj = nn.Sequential(
+            nn.Linear(128, output_dim),
+            nn.LayerNorm(output_dim),
+            nn.ReLU()
+        )
+
+    def forward(self, care_unit_ids: torch.Tensor, type_ids: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            care_unit_ids : LongTensor (B,) of care unit vocabulary indices
+            type_ids      : LongTensor (B,) of transfer type vocabulary indices
+        Returns:
+            (B, output_dim) Transfer event embeddings
+        """
+        c_emb = self.care_unit_emb(care_unit_ids)  # (B, 64)
+        t_emb = self.type_emb(type_ids)            # (B, 64)
+        x = torch.cat([c_emb, t_emb], dim=-1)      # (B, 128)
+        return self.proj(x)
+
+class EventEncoder(nn.Module):
+    def __init__(self, vocab_size=165, omr_dim=4, n_special=4, embed_dim=128, num_icu_units=15, num_care_units=30, num_transfer_types=10):
+        super().__init__()
+        self.lab_encoder      = LabPanelEncoder(vocab_size=vocab_size, output_dim=embed_dim)
+        self.omr_encoder      = OMREncoder(input_dim=omr_dim, output_dim=embed_dim)
+        self.special_encoder  = SpecialTokenEncoder(n_tokens=n_special, output_dim=embed_dim)
+        self.icu_encoder      = ICUEncoder(num_units=num_icu_units, output_dim=embed_dim)
+        self.transfer_encoder = TransferEncoder(num_care_units=num_care_units, num_types=num_transfer_types, output_dim=embed_dim)
+        self.embed_dim        = embed_dim
 
     def encode_lab(self, values, masks):
         return self.lab_encoder(values, masks)        # (B, 128)
@@ -107,3 +147,9 @@ class EventEncoder(nn.Module):
 
     def encode_kg_node(self, node_embeddings):
         return node_embeddings                        # (B, 128)
+
+    def encode_icu(self, unit_ids):
+        return self.icu_encoder(unit_ids)             # (B, 128)
+
+    def encode_transfer(self, care_unit_ids, type_ids):
+        return self.transfer_encoder(care_unit_ids, type_ids)  # (B, 128)

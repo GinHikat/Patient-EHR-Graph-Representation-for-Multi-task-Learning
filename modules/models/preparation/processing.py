@@ -69,14 +69,19 @@ class Extractor:
 
         df = pd.DataFrame([result])
         
-        cols = df.columns
-        df[cols] = df[cols].apply(lambda x: x.str.replace('_', '', regex=False).str.replace('\n', ' ', regex=False).str.strip())
-
+        # Ensure all expected columns exist to prevent KeyError
         cols = ["Text", "Examination", "Indication", "Technique", "Comparison", "Findings", "Impression"]
+        for col in cols:
+            if col not in df.columns:
+                df[col] = ""
+            else:
+                df[col] = df[col].fillna("").astype(str)
+
+        df[cols] = df[cols].apply(lambda x: x.str.replace('_', '', regex=False).str.replace('\n', ' ', regex=False).str.strip())
 
         df['Technique'] = df['Technique'].str.title()
 
-        return df[[c for c in cols if c in df.columns]]
+        return df[cols]
 
     def structural_df_discharge(self, text):
         """
@@ -107,13 +112,17 @@ class Extractor:
 
         df = pd.DataFrame([result])
 
-        cols = df.columns
+        # Ensure all expected columns exist to prevent KeyError
+        cols = ["Text"] + headers
+        for col in cols:
+            if col not in df.columns:
+                df[col] = ""
+            else:
+                df[col] = df[col].fillna("").astype(str)
+
         df[cols] = df[cols].apply(lambda x: x.str.replace('_', '', regex=False).str.replace('\n', ' ', regex=False).str.strip().str.replace(r'^[^a-zA-Z0-9]+', '', regex=True))
 
-        cols = ["Text"] + headers
-
-
-        return df[[c for c in cols if c in df.columns]]
+        return df[cols]
 
     def batch_extracting_radiology(self, df):
         """

@@ -6,11 +6,11 @@ import duckdb
 from dateutil.relativedelta import relativedelta
 
 import sys, os
-project_root = os.path.abspath(os.path.join(os.getcwd(), ".."))
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
 if project_root not in sys.path:
     sys.path.append(project_root)
 
-from shared_functions.gg_sheet_drive import *
+from shared_functions.global_functions import *
 from modules.dataset_preprocessing.utils import *
 
 # Path definitions
@@ -22,62 +22,68 @@ icu = os.path.join(mimic_path, 'icu')
 start_idx = 0
 BATCH_SIZE = 500
 
+print('Reading data....')
+transfer = read_full('hosp', 'transfers')
+patient = pd.read_csv('D:/Study/Education/Projects/Thesis/data/patient.csv')
+
 # Start with each ICU stay
-    icustay = read_full('icu', 'icustays')
+icustay = read_full('icu', 'icustays')
 
-    # Deal with year offset 
+# Deal with year offset 
+print('Processing ICU....')
 
-        to_date(icustay, 'intime')
-        to_date(icustay, 'outtime')
+to_date(icustay, 'intime')
+to_date(icustay, 'outtime')
 
-        icustay = pd.merge(icustay, patient, on = 'subject_id', how = 'left')
-        date_cols = ['intime', 'outtime']
-        for col in date_cols:
-            icustay[col] = pd.to_datetime(icustay[col], errors='coerce')
-        for col in date_cols:
-            icustay[col] = shift_year(icustay[col], icustay['offset'])
+icustay = pd.merge(icustay, patient, on = 'subject_id', how = 'left')
+date_cols = ['intime', 'outtime']
+for col in date_cols:
+    icustay[col] = pd.to_datetime(icustay[col], errors='coerce')
+for col in date_cols:
+    icustay[col] = shift_year(icustay[col], icustay['offset'])
 
-    icustay['los'] = (icustay['outtime'] - icustay['intime']).dt.total_seconds()
-    icustay['unit'] = icustay['first_careunit']
-    icustay = icustay.drop(['first_careunit', 'last_careunit', 'change_unit'], axis = 1)
+icustay['los'] = (icustay['outtime'] - icustay['intime']).dt.total_seconds()
+icustay['unit'] = icustay['first_careunit']
+icustay = icustay.drop(['first_careunit', 'last_careunit', 'change_unit'], axis = 1, errors='ignore')
 
-    # Write Stay nodes
+# Write Stay nodes
 
-        query = """
-            UNWIND $rows AS row
+print('Writing nodes....')
+query = """
+    UNWIND $rows AS row
 
-            MERGE (d:ICU:Stay:Test:MIMIC {id: row.stay_id})
-            MATCH (p:Admission:Test:MIMIC {id: row.hadm_id})
+    MERGE (d:ICU:Stay:Test:MIMIC {id: row.stay_id})
+    MATCH (p:Admission:Test:MIMIC {id: row.hadm_id})
 
-            SET d.start_time = row.intime,
-                d.name = toString(row.subject_id) + '_' + toString(row.hadm_id) + '_' + toString(row.stay_id),
-                d.end_time = row.outtime,
-                d.length_of_stay = row.los,
-                d.unit = row.unit
+    SET d.start_time = row.intime,
+        d.name = toString(row.subject_id) + '_' + toString(row.hadm_id) + '_' + toString(row.stay_id),
+        d.end_time = row.outtime,
+        d.length_of_stay = row.los,
+        d.unit = row.unit
 
-            MERGE (p)-[:HAS_ICUSTAY]->(d)
-            """
+    MERGE (p)-[:HAS_ICUSTAY]->(d)
+    """
 
-        # Process in batches
-        for i in tqdm(range(start_idx, len(icustay), BATCH_SIZE), desc="Batch processing"):
+# Process in batches
+for i in tqdm(range(start_idx, len(icustay), BATCH_SIZE), desc="Batch processing"):
 
-            batch = icustay.iloc[i:i+BATCH_SIZE]
+    batch = icustay.iloc[i:i+BATCH_SIZE]
 
-            rows = []
-            for _, row in batch.iterrows():
-                rows.append({
-                    'subject_id': row['subject_id'],
-                    'hadm_id': row['hadm_id'],
-                    "stay_id": row["stay_id"],
-                    "intime": row["intime"],
-                    'outtime': row['outtime'],
-                    'los': row['los'],
-                    'unit': row['unit']
-                })
+    rows = []
+    for _, row in batch.iterrows():
+        rows.append({
+            'subject_id': row['subject_id'],
+            'hadm_id': row['hadm_id'],
+            "stay_id": row["stay_id"],
+            "intime": row["intime"],
+            'outtime': row['outtime'],
+            'los': row['los'],
+            'unit': row['unit']
+        })
 
-            dml_ddl_neo4j(
-                query,
-                progress=False,
-                rows=rows
-            )
+    dml_ddl_neo4j(
+        query,
+        progress=False,
+        rows=rows
+    )
 
