@@ -28,6 +28,7 @@ const TYPE_COLORS = {
   Gene: "#fb7185", // Rose
   Pathway: "#2dd4bf", // Teal
   Chemical: "#facc15", // Yellow
+  Outpatient: "#fb923c", // Sleek Orange (Outpatient notes)
 };
 
 // Generate high-contrast colors based on string

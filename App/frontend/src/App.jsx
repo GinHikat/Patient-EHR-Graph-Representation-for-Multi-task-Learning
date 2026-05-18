@@ -103,6 +103,8 @@ function App() {
       "Item",
       "Result",
       "Transfer",
+      "Outpatient",
+      "Phenotype"
     ];
 
     // 1. Calculate global frequency for each label across all node sets

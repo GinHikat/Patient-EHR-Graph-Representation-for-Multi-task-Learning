@@ -5,8 +5,8 @@ import os
 from pathlib import Path
 
 # Load the consolidated file
-data = torch.load('/home/hngoc/gin/Clinical-Note-Extraction/data/Timeline/patient_timelines.pt')
-output_dir = Path('data/Timelines')
+data = torch.load('./data/Timeline/patient_timelines.pt')
+output_dir = Path('./data/Timelines')
 output_dir.mkdir(exist_ok=True)
 
 # Loop through and save individual files

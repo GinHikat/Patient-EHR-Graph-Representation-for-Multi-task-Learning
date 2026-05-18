@@ -8,7 +8,7 @@ if project_root not in sys.path:
     sys.path.append(project_root)
 
 from modules.downstream.temporal_sequence_setup.temporal_modeling import build_patient_timeline, admission_nodes, kg_embeddings, name_to_idx
-from modules.downstream.presetup.unified_encoder import LabPanelEncoder, OMREncoder, SpecialTokenEncoder, AdmissionEncoder, ICUEncoder, TransferEncoder
+from modules.downstream.presetup.unified_encoder import LabPanelEncoder, OMREncoder, SpecialTokenEncoder, AdmissionEncoder, ICUEncoder, TransferEncoder, OutpatientEncoder
 
 def main():
     print("Initializing encoders...")
@@ -18,6 +18,7 @@ def main():
     admission_encoder = AdmissionEncoder()
     icu_encoder       = ICUEncoder()
     transfer_encoder  = TransferEncoder()
+    outpatient_encoder = OutpatientEncoder()
 
     pid = 10000032
     print(f"Parsing timeline events for patient: {pid}")
@@ -33,6 +34,7 @@ def main():
         admission_encoder,
         icu_encoder,
         transfer_encoder,
+        outpatient_encoder,
         device=torch.device('cpu')
     )
 

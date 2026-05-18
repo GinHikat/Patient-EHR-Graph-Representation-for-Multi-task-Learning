@@ -62,7 +62,53 @@ class AdmissionEncoder(nn.Module):
 
         # Mask out padding positions before softmax
         if mask is not None:
-            scores = scores.masked_fill(~mask, float('-inf'))
+            # Prevent all-False rows from producing NaN in softmax
+            all_false_rows = ~mask.any(dim=-1, keepdim=True)
+            safe_mask = mask.clone()
+            safe_mask[:, 0] = safe_mask[:, 0] | all_false_rows.squeeze(-1)
+            scores = scores.masked_fill(~safe_mask, float('-inf'))
+
+        weights = torch.softmax(scores, dim=-1)      # (B, N)
+        weights = weights.unsqueeze(-1)              # (B, N, 1)
+
+        # Weighted sum
+        pooled = (weights * node_embeddings).sum(dim=1)  # (B, 128)
+
+        out = self.norm(self.project(pooled))        # (B, 128)
+        return out
+
+class OutpatientEncoder(nn.Module):
+    def __init__(self, embed_dim=128):
+        super().__init__()
+        # Attention scoring — how important is each diagnosis GAT node?
+        self.attention = nn.Sequential(
+            nn.Linear(embed_dim, 64),
+            nn.Tanh(),
+            nn.Linear(64, 1)
+        )
+        # Project pooled vector to output 128-dim
+        self.project = nn.Linear(embed_dim, embed_dim)
+        self.norm    = nn.LayerNorm(embed_dim)
+
+    def forward(self, node_embeddings: torch.Tensor, mask: torch.Tensor = None) -> torch.Tensor:
+        """
+        Args:
+            node_embeddings : (B, N, 128) — B outpatient note events, N flat ICD codes each
+            mask            : (B, N) bool — True where node exists, False where padding
+        Returns:
+            outpatient_emb  : (B, 128)
+        """
+        # Compute attention scores
+        scores = self.attention(node_embeddings)     # (B, N, 1)
+        scores = scores.squeeze(-1)                  # (B, N)
+
+        # Mask out padding positions before softmax
+        if mask is not None:
+            # Prevent all-False rows from producing NaN in softmax
+            all_false_rows = ~mask.any(dim=-1, keepdim=True)
+            safe_mask = mask.clone()
+            safe_mask[:, 0] = safe_mask[:, 0] | all_false_rows.squeeze(-1)
+            scores = scores.masked_fill(~safe_mask, float('-inf'))
 
         weights = torch.softmax(scores, dim=-1)      # (B, N)
         weights = weights.unsqueeze(-1)              # (B, N, 1)
@@ -129,12 +175,13 @@ class TransferEncoder(nn.Module):
 class EventEncoder(nn.Module):
     def __init__(self, vocab_size=165, omr_dim=4, n_special=4, embed_dim=128, num_icu_units=15, num_care_units=30, num_transfer_types=10):
         super().__init__()
-        self.lab_encoder      = LabPanelEncoder(vocab_size=vocab_size, output_dim=embed_dim)
-        self.omr_encoder      = OMREncoder(input_dim=omr_dim, output_dim=embed_dim)
-        self.special_encoder  = SpecialTokenEncoder(n_tokens=n_special, output_dim=embed_dim)
-        self.icu_encoder      = ICUEncoder(num_units=num_icu_units, output_dim=embed_dim)
-        self.transfer_encoder = TransferEncoder(num_care_units=num_care_units, num_types=num_transfer_types, output_dim=embed_dim)
-        self.embed_dim        = embed_dim
+        self.lab_encoder        = LabPanelEncoder(vocab_size=vocab_size, output_dim=embed_dim)
+        self.omr_encoder        = OMREncoder(input_dim=omr_dim, output_dim=embed_dim)
+        self.special_encoder    = SpecialTokenEncoder(n_tokens=n_special, output_dim=embed_dim)
+        self.icu_encoder        = ICUEncoder(num_units=num_icu_units, output_dim=embed_dim)
+        self.transfer_encoder   = TransferEncoder(num_care_units=num_care_units, num_types=num_transfer_types, output_dim=embed_dim)
+        self.outpatient_encoder = OutpatientEncoder(embed_dim=embed_dim)
+        self.embed_dim          = embed_dim
 
     def encode_lab(self, values, masks):
         return self.lab_encoder(values, masks)        # (B, 128)
@@ -152,4 +199,7 @@ class EventEncoder(nn.Module):
         return self.icu_encoder(unit_ids)             # (B, 128)
 
     def encode_transfer(self, care_unit_ids, type_ids):
-        return self.transfer_encoder(care_unit_ids, type_ids)  # (B, 128)
+        return self.transfer_encoder(care_unit_ids, type_ids)  # (B, 128)
+
+    def encode_outpatient(self, node_embeddings, mask):
+        return self.outpatient_encoder(node_embeddings, mask)  # (B, 128)

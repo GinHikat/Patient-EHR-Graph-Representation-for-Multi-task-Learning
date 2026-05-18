@@ -28,6 +28,20 @@ from presetup.GAT import KG_GAT
 from presetup.unified_encoder import *
 from shared_functions.global_functions import query_neo4j
 
+def parse_time(t) -> datetime:
+    """Normalize all timestamp formats to datetime."""
+    if t is None:
+        return None
+    if isinstance(t, str):
+        t = t.replace('T', ' ').split('.')[0].strip()
+        return datetime.strptime(t, '%Y-%m-%d %H:%M:%S')
+    if hasattr(t, 'year') and hasattr(t, 'month') and hasattr(t, 'day'):
+        return datetime(t.year, t.month, t.day, 
+                        getattr(t, 'hour', 0), 
+                        getattr(t, 'minute', 0), 
+                        getattr(t, 'second', 0))
+    return t
+
 load_dotenv() 
 
 data_dir = os.getenv('DATA_DIR')
@@ -44,6 +58,25 @@ with open(os.path.join(downstream_data_path, 'patients.txt')) as f:
 kg_embeddings = np.load(os.path.join(downstream_data_path,'kg_nodes_embed_gat.npy'))
 all_nodes    = pd.read_csv(os.path.join(downstream_data_path,'kg_nodes.csv'), dtype={'id': str}, low_memory=False)
 name_to_idx  = dict(zip(all_nodes['name'].str.lower(), all_nodes['node_idx']))
+
+# Outpatient note lookup cache (initially empty, populated dynamically or via batch pre-fetching)
+outpatient_lookup = defaultdict(list)
+
+# Load CCSR diagnosis map for category-to-ICD resolution
+map_path = os.path.join(base_data_dir, 'diagnosis_map.csv')
+cat_to_icds = {}
+if os.path.exists(map_path):
+    print("Loading CCSR Diagnosis Mapping table...")
+    map_df = pd.read_csv(map_path, low_memory=False)
+    map_df['ccsr_category_str'] = map_df['ccsr_category'].astype(str).str.strip().str.lower()
+    map_df['icd_code_str'] = map_df['icd_code'].astype(str).str.strip().str.lower()
+    cat_to_icds = map_df.groupby('ccsr_category_str')['icd_code_str'].apply(list).to_dict()
+
+# Map specific ICD code IDs to GAT node indices
+all_nodes['id_str'] = all_nodes['id'].astype(str).str.strip().str.lower()
+id_to_idx = dict(zip(all_nodes['id_str'], all_nodes['node_idx']))
+
+# Direct Neo4j [:HAS_DIAGNOSIS] edges are used instead of radiology.csv loading.
 
 OUTPUT_DIR = os.path.join(data_dir, 'Lab_Embedding')
 OMR_OUTPUT_DIR  = os.path.join(data_dir, 'OMR_Embedding')
@@ -133,19 +166,40 @@ def collate_admission_nodes(admission_ids: list[str], admission_nodes: dict,
 
     return padded, mask  # (B, 70, 128), (B, 70)
 
-def parse_time(t) -> datetime:
-    """Normalize all timestamp formats to datetime."""
-    if t is None:
-        return None
-    if isinstance(t, str):
-        t = t.replace('T', ' ').split('.')[0].strip()
-        return datetime.strptime(t, '%Y-%m-%d %H:%M:%S')
-    if hasattr(t, 'year') and hasattr(t, 'month') and hasattr(t, 'day'):
-        return datetime(t.year, t.month, t.day, 
-                        getattr(t, 'hour', 0), 
-                        getattr(t, 'minute', 0), 
-                        getattr(t, 'second', 0))
-    return t
+MAX_OUTPATIENT_DIAGNOSES = 50
+
+def collate_outpatient_nodes(categories_list: list[str], cat_to_icds: dict,
+                             id_to_idx: dict, kg_embeddings: np.ndarray) -> tuple:
+    """
+    Build padded node embedding tensor + mask for a list of CCSR categories.
+
+    Returns:
+        padded : (1, MAX_OUTPATIENT_DIAGNOSES, 128)
+        mask   : (1, MAX_OUTPATIENT_DIAGNOSES) bool
+    """
+    padded = torch.zeros(1, MAX_OUTPATIENT_DIAGNOSES, 128)
+    mask   = torch.zeros(1, MAX_OUTPATIENT_DIAGNOSES, dtype=torch.bool)
+
+    # Flatten all categories to their corresponding specific ICD codes
+    flat_icds = []
+    for cat in categories_list:
+        icds = cat_to_icds.get(cat.lower(), [])
+        flat_icds.extend(icds)
+    
+    # Deduplicate to prevent redundant nodes
+    flat_icds = list(set(flat_icds))
+    
+    # Cap at MAX_OUTPATIENT_DIAGNOSES
+    flat_icds = flat_icds[:MAX_OUTPATIENT_DIAGNOSES]
+
+    for j, code in enumerate(flat_icds):
+        idx = id_to_idx.get(code.lower())
+        if idx is not None:
+            padded[0, j] = torch.tensor(kg_embeddings[idx])
+            mask[0, j]   = True
+
+    return padded, mask
+
 
 ICU_UNIT_VOCAB = {
     'medical intensive care unit (micu)': 1,
@@ -213,17 +267,21 @@ def build_patient_timeline(
     admission_encoder,
     icu_encoder,
     transfer_encoder,
+    outpatient_encoder,
     icu_lookup=None,
     transfer_lookup=None,
     admission_lookup=None,
+    outpatient_lookup=None,
+    cat_to_icds=None,
+    id_to_idx=None,
     device=torch.device('cpu')):
     """
-    Build unified timeline for one patient, enriched with ICU stays and transfers.
+    Build unified timeline for one patient, enriched with ICU stays, transfers, and outpatient notes.
 
     Returns:
         embeddings  : (T, 128) tensor — one vector per event
         times       : list of T datetime objects
-        event_meta  : list of T dicts — {type, adm_id (if applicable), ...}
+        event_meta  : list of T dicts — {type, adm_id/note_id (if applicable), ...}
     """
     events = []   # list of {time, type, data}
 
@@ -249,10 +307,12 @@ def build_patient_timeline(
     except FileNotFoundError:
         pass
 
+    pid_str = str(pid).strip().lower()
+
     # ICU Stays (Start events only)
     try:
         if icu_lookup is not None:
-            icu_res = icu_lookup.get(pid, [])
+            icu_res = icu_lookup.get(pid_str, [])
         else:
             icu_res = query_neo4j('''
                 MATCH (a:Admission)-[:HAS_ICUSTAY]->(i:ICU)
@@ -275,7 +335,7 @@ def build_patient_timeline(
     # Transfers (Start events only)
     try:
         if transfer_lookup is not None:
-            trans_res = transfer_lookup.get(pid, [])
+            trans_res = transfer_lookup.get(pid_str, [])
         else:
             trans_res = query_neo4j('''
                 MATCH (a:Admission)-[:HAS_TRANSFER]->(t:Transfer)
@@ -286,8 +346,10 @@ def build_patient_timeline(
         for row in trans_res:
             t = parse_time(row['intime'])
             care_unit = row['care_unit']
-            transfer_type = row['type']
+            transfer_type = row.get('type') or row.get('transfer_type')
             if t and care_unit:
+                if str(care_unit).strip().lower() == 'unknown':
+                    continue
                 events.append({
                     'time': t,
                     'type': 'Transfer',
@@ -300,7 +362,7 @@ def build_patient_timeline(
     # Admissions → ADMIT + DISCHARGE + AdmissionEmb
     try:
         if admission_lookup is not None:
-            adm_result = admission_lookup.get(pid, [])
+            adm_result = admission_lookup.get(pid_str, [])
         else:
             adm_result = query_neo4j('''
                 MATCH (a:Admission)
@@ -317,13 +379,57 @@ def build_patient_timeline(
             if admit_t:
                 events.append({'time': admit_t,  'type': 'ADMIT',     'adm_id': adm_id})
             if disch_t:
-                events.append({'time': disch_t,  'type': 'DISCHARGE', 'adm_id': adm_id})
                 events.append({'time': disch_t,  'type': 'admission_emb', 'adm_id': adm_id})
+                events.append({'time': disch_t,  'type': 'DISCHARGE', 'adm_id': adm_id})
     except Exception:
         pass
 
-    # Sort by time
-    events.sort(key=lambda e: e['time'])
+    # Outpatient Notes (OutNote events)
+    try:
+        if outpatient_lookup is not None and len(outpatient_lookup) > 0:
+            out_res = outpatient_lookup.get(pid_str, [])
+        else:
+            out_res = []
+            raw_res = query_neo4j('''
+                MATCH (p:Patient)-[:HAS_OUTPATIENT_NOTE]->(d:Outpatient)
+                WHERE p.id = $pid
+                OPTIONAL MATCH (d)-[:HAS_DIAGNOSIS]->(diag:Diagnosis)
+                RETURN d.id AS note_id, d.time AS charttime, collect(diag.id) AS categories
+                ORDER BY d.time
+            ''', pid=pid)
+            for row in raw_res:
+                note_id_str = str(row['note_id']).strip().lower()
+                categories = [str(cat).strip().lower() for cat in row.get('categories', []) if cat]
+                out_res.append({
+                    'note_id': note_id_str,
+                    'time': parse_time(row['charttime']),
+                    'categories': categories
+                })
+        for event in out_res:
+            t = event['time']
+            # Only include OutNote events that contain at least one diagnosis category
+            if t and event['categories']:
+                events.append({
+                    'time': t,
+                    'type': 'OutNote',
+                    'categories': event['categories'],
+                    'note_id': event['note_id']
+                })
+    except Exception:
+        pass
+
+    # Sort by time. For events at the exact same timestamp, ensure admission_emb is placed before DISCHARGE
+    def sort_key(e):
+        t_type = e['type']
+        if t_type == 'admission_emb':
+            priority = 0
+        elif t_type == 'DISCHARGE':
+            priority = 1
+        else:
+            priority = -1
+        return (e['time'], priority)
+
+    events.sort(key=sort_key)
 
     if not events:
         return None, None, None
@@ -362,6 +468,14 @@ def build_patient_timeline(
             mask   = mask.to(device)
             emb    = admission_encoder(padded, mask)          # (1, 128)
 
+        elif t == 'OutNote':
+            padded, mask = collate_outpatient_nodes(
+                event['categories'], cat_to_icds, id_to_idx, kg_embeddings
+            )
+            padded = padded.to(device)
+            mask   = mask.to(device)
+            emb    = outpatient_encoder(padded, mask)         # (1, 128)
+
         elif t == 'ICU':
             unit_name = str(event['unit']).lower()
             unit_id = ICU_UNIT_VOCAB.get(unit_name, 0)
@@ -385,7 +499,8 @@ def build_patient_timeline(
             'adm_id': event.get('adm_id'),
             'unit': event.get('unit'),
             'care_unit': event.get('care_unit'),
-            'transfer_type': event.get('transfer_type')
+            'transfer_type': event.get('transfer_type'),
+            'note_id': event.get('note_id')
         })
 
     embeddings = torch.stack(embeddings)                     # (T, 128)
@@ -402,6 +517,7 @@ def build_and_save_all_timelines(
     admission_encoder,
     icu_encoder,
     transfer_encoder,
+    outpatient_encoder,
     output_dir=TIMELINE_DIR,
     batch_size=100,
     device=torch.device('cpu')):
@@ -429,6 +545,7 @@ def build_and_save_all_timelines(
     admission_encoder.eval()
     icu_encoder.eval()
     transfer_encoder.eval()
+    outpatient_encoder.eval()
 
     # Process in chunks of 1000 patients for extreme bulk query speeds
     db_batch_size = 1000
@@ -443,6 +560,7 @@ def build_and_save_all_timelines(
         icu_lookup = defaultdict(list)
         transfer_lookup = defaultdict(list)
         admission_lookup = defaultdict(list)
+        outpatient_lookup = defaultdict(list)
 
         if pids_to_process:
             # 1. Bulk pre-fetch ICU Stays
@@ -454,7 +572,8 @@ def build_and_save_all_timelines(
                     ORDER BY i.start_time
                 ''', pids=pids_to_process)
                 for row in icu_batch:
-                    icu_lookup[row['pid']].append({
+                    key = str(row['pid']).strip().lower()
+                    icu_lookup[key].append({
                         'unit': row['unit'],
                         'intime': row['intime']
                     })
@@ -470,9 +589,10 @@ def build_and_save_all_timelines(
                     ORDER BY t.start_time
                 ''', pids=pids_to_process)
                 for row in trans_batch:
-                    transfer_lookup[row['pid']].append({
+                    key = str(row['pid']).strip().lower()
+                    transfer_lookup[key].append({
                         'care_unit': row['care_unit'],
-                        'transfer_type': row['type'],
+                        'type': row['type'],
                         'intime': row['intime']
                     })
             except Exception:
@@ -487,10 +607,32 @@ def build_and_save_all_timelines(
                     ORDER BY a.admit_time
                 ''', pids=pids_to_process)
                 for row in adm_batch:
-                    admission_lookup[row['pid']].append({
+                    key = str(row['pid']).strip().lower()
+                    admission_lookup[key].append({
                         'adm_id': row['adm_id'],
                         'admittime': row['admittime'],
                         'dischtime': row['dischtime']
+                    })
+            except Exception:
+                pass
+
+            # 4. Bulk pre-fetch Outpatient Notes (OutNotes) from Neo4j
+            try:
+                out_batch = query_neo4j('''
+                    MATCH (p:Patient)-[:HAS_OUTPATIENT_NOTE]->(d:Outpatient)
+                    WHERE p.id IN $pids
+                    OPTIONAL MATCH (d)-[:HAS_DIAGNOSIS]->(diag:Diagnosis)
+                    RETURN p.id AS pid, d.id AS note_id, d.time AS charttime, collect(diag.id) AS categories
+                    ORDER BY d.time
+                ''', pids=pids_to_process)
+                for row in out_batch:
+                    key = str(row['pid']).strip().lower()
+                    note_id_str = str(row['note_id']).strip().lower()
+                    categories = [str(cat).strip().lower() for cat in row.get('categories', []) if cat]
+                    outpatient_lookup[key].append({
+                        'note_id': note_id_str,
+                        'time': parse_time(row['charttime']),
+                        'categories': categories
                     })
             except Exception:
                 pass
@@ -505,10 +647,13 @@ def build_and_save_all_timelines(
                 embeddings, times, meta = build_patient_timeline(
                     pid, admission_nodes, kg_embeddings, name_to_idx,
                     lab_encoder, omr_encoder, special_encoder, admission_encoder,
-                    icu_encoder, transfer_encoder,
+                    icu_encoder, transfer_encoder, outpatient_encoder,
                     icu_lookup=icu_lookup,
                     transfer_lookup=transfer_lookup,
                     admission_lookup=admission_lookup,
+                    outpatient_lookup=outpatient_lookup,
+                    cat_to_icds=cat_to_icds,
+                    id_to_idx=id_to_idx,
                     device=device
                 )
 
@@ -551,12 +696,13 @@ def compute_delta_t(times: list) -> torch.Tensor:
 
 if __name__ == '__main__':
     
-    lab_encoder       = LabPanelEncoder()
-    omr_encoder       = OMREncoder()
-    special_encoder   = SpecialTokenEncoder()
-    admission_encoder = AdmissionEncoder()
-    icu_encoder       = ICUEncoder()
-    transfer_encoder  = TransferEncoder()
+    lab_encoder        = LabPanelEncoder()
+    omr_encoder        = OMREncoder()
+    special_encoder    = SpecialTokenEncoder()
+    admission_encoder  = AdmissionEncoder()
+    icu_encoder        = ICUEncoder()
+    transfer_encoder   = TransferEncoder()
+    outpatient_encoder = OutpatientEncoder()
 
     # Build and save timeline for all Patient
     build_and_save_all_timelines(
@@ -569,5 +715,6 @@ if __name__ == '__main__':
         special_encoder,
         admission_encoder,
         icu_encoder,
-        transfer_encoder
+        transfer_encoder,
+        outpatient_encoder
     )

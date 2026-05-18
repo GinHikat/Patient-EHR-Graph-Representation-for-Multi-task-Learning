@@ -193,6 +193,21 @@ def get_node_by_id(node_id: str, namespace: Optional[str] = None, node_types: Op
         RETURN a AS source, r2 AS rel, m AS target
 
         UNION
+        
+        WITH n
+        WITH n WHERE "Patient" IN labels(n)
+        MATCH (n)-[r1:HAS_OUTPATIENT_NOTE]->(o:Outpatient)
+        RETURN n AS source, r1 AS rel, o AS target
+        
+        UNION
+        
+        WITH n
+        WITH n WHERE "Patient" IN labels(n)
+        MATCH (n)-[:HAS_OUTPATIENT_NOTE]->(o:Outpatient)-[r2]->(m)
+        WHERE NOT $is_filtered OR any(l IN labels(m) WHERE l IN $target_labels)
+        RETURN o AS source, r2 AS rel, m AS target
+
+        UNION
 
         WITH n
         WITH n WHERE "Admission" IN labels(n)
