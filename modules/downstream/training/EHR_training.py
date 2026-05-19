@@ -38,7 +38,7 @@ def parse_args():
     parser.add_argument('--lr', type=float, default=1e-4, help='Learning rate')
     parser.add_argument('--weight_decay', type=float, default=1e-4, help='Weight decay')
     parser.add_argument('--epochs', type=int, default=50, help='Number of epochs')
-    parser.add_argument('--patience', type=int, default=7, help='Early stopping patience')
+    parser.add_argument('--patience', type=int, default=20, help='Early stopping patience')
     parser.add_argument('--grad_clip', type=float, default=1.0, help='Gradient clipping')
     parser.add_argument('--num_workers', type=int, default=0, help='Number of workers for data loading')
     parser.add_argument('--threshold', type=float, default=0.6, help='Classification threshold')
@@ -46,6 +46,7 @@ def parse_args():
     parser.add_argument('--start_epoch', type=int, default=1, help='Epoch to start from')
     parser.add_argument('--task', type=str, default='all', choices=['all', 'mortality', 'los_7d', 'readmission', 'progression', 'drug_rec'], help='Target task for independent training')
     parser.add_argument('--no_pos_weight', action='store_true', help='Use equal loss (no pos_weight) for all classes')
+    parser.add_argument('--use_focal_loss', action='store_true', help='Use Focal Loss for mortality to handle class imbalance')
     return parser.parse_args()
 
 args = parse_args()
@@ -53,7 +54,7 @@ args = parse_args()
 base_data_dir = os.path.join(project_root, 'data')
 downstream_data_path = os.path.join(base_data_dir, 'Timeline')
 
-TIMELINE_DIR         = os.path.join(base_data_dir, 'Timelines')
+TIMELINE_DIR         = os.path.join(base_data_dir, 'Timeline_new')
 ADMISSION_NODES_PATH = os.path.join(downstream_data_path, 'admission_nodes.json')
 DIAG_VOCAB_PATH      = os.path.join(downstream_data_path, 'top200_diag_vocab.json')
 PROG_WEIGHTS_PATH    = os.path.join(downstream_data_path, 'progression_pos_weights.npy')
@@ -76,6 +77,8 @@ if args.task != 'all':
     CHECKPOINT_DIR = CHECKPOINT_DIR.replace(config_str, f"{config_str}_task_{args.task}")
 if args.no_pos_weight:
     CHECKPOINT_DIR = CHECKPOINT_DIR.replace(config_str, f"{config_str}_no_pw")
+if args.use_focal_loss:
+    CHECKPOINT_DIR = CHECKPOINT_DIR.replace(config_str, f"{config_str}_focal")
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 
 # Training hyperparameters from args
@@ -87,7 +90,7 @@ PATIENCE      = args.patience
 GRAD_CLIP     = args.grad_clip
 NUM_WORKERS   = args.num_workers
 THRESHOLD     = args.threshold
-MAX_LEN       = 512 # Cap long timelines for Transformer O(T^2) efficiency
+MAX_LEN       = 644 # Bounded at 99th percentile to prevent padding overhead
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f'Using device: {DEVICE}')
@@ -114,7 +117,7 @@ def evaluate(model, loader, criterion, device):
             if batch is None: continue
             batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
             
-            with torch.cuda.amp.autocast():
+            with torch.amp.autocast('cuda'):
                 logits = model(batch)
                 loss, loss_dict = criterion(logits, batch)
                 
@@ -232,9 +235,10 @@ def train(
     best_mean_auroc   = 0.0
     epochs_no_improve = 0
     history           = []
+    recent_checkpoints = [] # Keep last 10 epoch checkpoints in CPU memory for Stochastic Weight Averaging (SWA)
     
     # Mixed Precision Scaler
-    scaler = torch.cuda.amp.GradScaler()
+    scaler = torch.amp.GradScaler('cuda')
 
     # Initialize/Clear metrics log file only if starting from scratch
     log_mode = 'w' if start_epoch == 1 else 'a'
@@ -273,7 +277,7 @@ def train(
             optimizer.zero_grad()
 
             # Autocast for Mixed Precision
-            with torch.cuda.amp.autocast():
+            with torch.amp.autocast('cuda'):
                 logits = model(batch)
                 loss, loss_dict = criterion(logits, batch)
 
@@ -380,6 +384,11 @@ def train(
             'val_metrics': val_metrics,
         })
 
+        # In-memory SWA: save model state dict to CPU
+        recent_checkpoints.append({k: v.cpu().clone() for k, v in model.state_dict().items()})
+        if len(recent_checkpoints) > 10:
+            recent_checkpoints.pop(0)
+
         # Save best model
         if val_metrics['mean_auroc'] > best_mean_auroc:
 
@@ -404,6 +413,20 @@ def train(
                 f"Best mean AUROC: {best_mean_auroc:.4f}"
             )
             break
+
+    # Run Stochastic Weight Averaging (SWA)
+    if recent_checkpoints:
+        print(f"\n=== Running Stochastic Weight Averaging (SWA) over the last {len(recent_checkpoints)} epochs ===")
+        swa_state_dict = {}
+        for key in recent_checkpoints[0].keys():
+            if recent_checkpoints[0][key].dtype.is_floating_point:
+                swa_state_dict[key] = torch.stack([ckpt[key] for ckpt in recent_checkpoints]).mean(dim=0)
+            else:
+                swa_state_dict[key] = recent_checkpoints[-1][key]
+        
+        # Save SWA model weights
+        torch.save(swa_state_dict, os.path.join(CHECKPOINT_DIR, 'swa_model.pt'))
+        print(f"✓ SWA model saved to {CHECKPOINT_DIR}/swa_model.pt")
 
     return history
 
@@ -456,7 +479,7 @@ if __name__ == '__main__':
         ablation_mode   = ablation_mode,
     )
 
-    MAX_LEN = 512 # Cap long timelines for Transformer O(T^2) efficiency
+    MAX_LEN = 644 # Bounded at 99th percentile
     
     train_loader = DataLoader(
         train_dataset, batch_size=BATCH_SIZE, shuffle=True,
@@ -528,12 +551,24 @@ if __name__ == '__main__':
         pos_weight_readmission = torch.tensor([pw_readm], dtype=torch.float32).to(DEVICE),
         pos_weight_progression = prog_weights,
         pos_weight_drug_rec    = drug_weights,
+        w_mortality            = 1.0,
+        w_los                  = 1.0,
+        w_readmission          = 1.0,
+        w_progression          = 1.0,
+        w_drug_rec             = 1.0,
+        use_focal_loss_mortality = args.use_focal_loss
     ).to(DEVICE)
 
     # Optimizer + scheduler
-    optimizer = torch.optim.AdamW(
-        model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY
-    )
+    # Differential Learning Rates for Learnable Pooling Alphas
+    alpha_params = [p for n, p in model.named_parameters() if 'alpha' in n]
+    base_params  = [p for n, p in model.named_parameters() if 'alpha' not in n]
+    
+    optimizer = torch.optim.AdamW([
+        {'params': base_params,  'lr': LR},
+        {'params': alpha_params, 'lr': LR * 10} # Fast convergence for learnable alphas
+    ], weight_decay=WEIGHT_DECAY)
+
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode='max', factor=0.5, patience=3
     )
@@ -552,20 +587,15 @@ if __name__ == '__main__':
         f.write(f"\nTotal Run Time: {run_model_time/60:.2f} minutes\n")
     
     # Final Evaluation on Test Set
-    print('\n' + '='*30)
+    print('\n' + '='*40)
     print('RUNNING FINAL TEST EVALUATION')
-    print('='*30)
-    
-    # Load best model weights
-    best_model_path = os.path.join(CHECKPOINT_DIR, 'best_model.pt')
-    if os.path.exists(best_model_path):
-        model.load_state_dict(torch.load(best_model_path, map_location=DEVICE))
-        print(f"Loaded best model weights from {best_model_path}")
+    print('='*40)
     
     # Load test data
     test_df = pd.read_csv(TEST_DF_PATH, dtype={'id': str, 'patient_id': str})
-    # patient_id is already str due to dtype above
-    
+    if 'los_7d' not in test_df.columns:
+        test_df['los_7d'] = (test_df['length_of_stay'] >= 7).astype(float)
+        
     test_dataset = EHRDataset(
         admissions_df   = test_df,
         timeline_dir    = TIMELINE_DIR,
@@ -575,49 +605,70 @@ if __name__ == '__main__':
         patient_cache   = patient_cache,
         admission_cache = admission_cache,
         max_len         = MAX_LEN,
+        ablation_mode   = ablation_mode,
     )
     test_loader = DataLoader(
         test_dataset, batch_size=BATCH_SIZE, shuffle=False,
         collate_fn=ehr_collate_fn, num_workers=NUM_WORKERS,
         pin_memory=(DEVICE.type == 'cuda')
     )
+
+    # 1. Evaluate Best Validation Checkpoint
+    best_model_path = os.path.join(CHECKPOINT_DIR, 'best_model.pt')
+    best_metrics = None
+    if os.path.exists(best_model_path):
+        model.load_state_dict(torch.load(best_model_path, map_location=DEVICE))
+        print(f"Loaded best validation model weights from {best_model_path}")
+        best_metrics = evaluate(model, test_loader, criterion, DEVICE)
+
+    # 2. Evaluate SWA Checkpoint
+    swa_model_path = os.path.join(CHECKPOINT_DIR, 'swa_model.pt')
+    swa_metrics = None
+    if os.path.exists(swa_model_path):
+        model.load_state_dict(torch.load(swa_model_path, map_location=DEVICE))
+        print(f"Loaded SWA model weights from {swa_model_path}")
+        swa_metrics = evaluate(model, test_loader, criterion, DEVICE)
+
+    # 3. Print Comparison Table
+    print('\n' + '='*75)
+    print('FINAL TEST SET COMPARISON: BEST MODEL vs SWA MODEL')
+    print('='*75)
+    print(f'{"Task / Metric":<25} | {"Best Model":<15} | {"SWA Model":<15} | {"Difference":<10}')
+    print('-'*75)
     
-    test_metrics = evaluate(model, test_loader, criterion, DEVICE)
+    tasks_to_compare = [
+        ('Mortality AUROC', 'mortality'),
+        ('Mortality AUPR', 'mortality_aupr'),
+        ('LOS > 7d AUROC', 'los_7d'),
+        ('LOS > 7d AUPR', 'los_7d_aupr'),
+        ('Readmission AUROC', 'readmission'),
+        ('Readmission AUPR', 'readmission_aupr'),
+        ('Progression AUROC', 'progression'),
+        ('Progression AUPR', 'progression_aupr'),
+        ('Drug Rec AUROC', 'drug_rec'),
+        ('Drug Rec AUPR', 'drug_rec_aupr'),
+        ('Mean AUROC (Avg)', 'mean_auroc'),
+    ]
     
-    print(
-        f"\nFINAL TEST Mean AUROC: {test_metrics['mean_auroc']:.4f}\n"
+    comp_msg = ""
+    for label, key in tasks_to_compare:
+        v_best = best_metrics[key] if (best_metrics and key in best_metrics) else 0.0
+        v_swa = swa_metrics[key] if (swa_metrics and key in swa_metrics) else 0.0
+        diff = v_swa - v_best
+        sign = "+" if diff >= 0 else ""
+        print(f'{label:<25} | {v_best:.4f}         | {v_swa:.4f}         | {sign}{diff:.4f}')
+        comp_msg += f'{label:<25} | {v_best:.4f}         | {v_swa:.4f}         | {sign}{diff:.4f}\n'
+    print('='*75)
 
-        f"\n[MORTALITY]\n"
-        f"AUROC: {test_metrics['mortality']:.4f} | "
-        f"AUPR: {test_metrics['mortality_aupr']:.4f} | "
-        f"F1: {test_metrics['mortality_f1']:.4f}\n"
-
-        f"\n[LOS > 7 DAYS]\n"
-        f"AUROC: {test_metrics['los_7d']:.4f} | "
-        f"AUPR: {test_metrics['los_7d_aupr']:.4f} | "
-        f"F1: {test_metrics['los_7d_f1']:.4f}\n"
-
-        f"\n[READMISSION]\n"
-        f"AUROC: {test_metrics['readmission']:.4f} | "
-        f"AUPR: {test_metrics['readmission_aupr']:.4f} | "
-        f"F1: {test_metrics['readmission_f1']:.4f}\n"
-
-        f"\n[PROGRESSION]\n"
-        f"AUROC: {test_metrics['progression']:.4f} | "
-        f"AUPR: {test_metrics['progression_aupr']:.4f} | "
-        f"F1: {test_metrics['progression_f1']:.4f}\n"
-
-        f"\n[DRUG RECOMMENDATION]\n"
-        f"AUROC: {test_metrics['drug_rec']:.4f} | "
-        f"AUPR: {test_metrics['drug_rec_aupr']:.4f} | "
-        f"F1: {test_metrics['drug_rec_f1']:.4f}\n"
-    )
-
-    # Log final test results to file
+    # Log results to file
     with open(os.path.join(CHECKPOINT_DIR, 'metrics.txt'), 'a') as f:
-        f.write("\n" + "="*20 + " FINAL TEST RESULTS " + "="*20 + "\n")
-        f.write(f"Mean AUROC: {test_metrics['mean_auroc']:.4f}\n")
-        f.write(json.dumps(test_metrics, indent=2))
+        f.write("\n" + "="*20 + " FINAL TEST RESULTS COMPARISON " + "="*20 + "\n")
+        f.write(comp_msg)
+        f.write("="*60 + "\n")
+        if best_metrics:
+            f.write("\nBEST MODEL METRICS:\n" + json.dumps(best_metrics, indent=2) + "\n")
+        if swa_metrics:
+            f.write("\nSWA MODEL METRICS:\n" + json.dumps(swa_metrics, indent=2) + "\n")
 
     with open(os.path.join(CHECKPOINT_DIR, 'history.json'), 'w') as f:
         json.dump(history, f, indent=2)

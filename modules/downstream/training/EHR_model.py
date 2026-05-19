@@ -149,16 +149,34 @@ class EHRDataset(Dataset):
             # Zero out the entire timeline to test static context only
             emb = np.zeros_like(emb)
         elif self.ablation_mode == 'no_labs':
-            # Zero out only LAB events
+            # Zero out only LAB events (case-insensitive)
             emb = emb.copy() # Make copy to allow modification
             for i, entry in enumerate(meta[:len(emb)]):
-                if entry.get('type') == 'LAB':
+                if entry.get('type', '').upper() == 'LAB':
                     emb[i] = 0
         elif self.ablation_mode == 'no_omr':
-            # Zero out only OMR events
+            # Zero out only OMR events (case-insensitive)
             emb = emb.copy()
             for i, entry in enumerate(meta[:len(emb)]):
-                if entry.get('type') == 'OMR':
+                if entry.get('type', '').upper() == 'OMR':
+                    emb[i] = 0
+        elif self.ablation_mode == 'no_outnotes':
+            # Zero out only outpatient note (OutNote) events
+            emb = emb.copy()
+            for i, entry in enumerate(meta[:len(emb)]):
+                if entry.get('type', '').upper() == 'OUTNOTE':
+                    emb[i] = 0
+        elif self.ablation_mode == 'no_icu':
+            # Zero out only Intensive Care Unit (ICU) events
+            emb = emb.copy()
+            for i, entry in enumerate(meta[:len(emb)]):
+                if entry.get('type', '').upper() == 'ICU':
+                    emb[i] = 0
+        elif self.ablation_mode == 'no_transfers':
+            # Zero out only ward relocation (Transfer) events
+            emb = emb.copy()
+            for i, entry in enumerate(meta[:len(emb)]):
+                if entry.get('type', '').upper() == 'TRANSFER':
                     emb[i] = 0
         elif self.ablation_mode == 'no_last_event':
             # Remove only the very last event (the admission_emb summary)
@@ -378,19 +396,23 @@ class EHRTransformer(nn.Module):
 
         if target_task in ['all', 'mortality']:
             self.head_mortality   = nn.Linear(PROJ_DIM, 1)
-            self.alpha_mortality  = nn.Parameter(torch.tensor(0.0))
+        if target_task in ['all', 'mortality']:
+            self.head_mortality   = nn.Linear(PROJ_DIM, 1)
         if target_task in ['all', 'los_7d']:
             self.head_los         = nn.Linear(PROJ_DIM, 1)
-            self.alpha_los        = nn.Parameter(torch.tensor(0.0))
         if target_task in ['all', 'readmission']:
             self.head_readmission = nn.Linear(PROJ_DIM, 1)
-            self.alpha_readm      = nn.Parameter(torch.tensor(0.0))
         if target_task in ['all', 'progression']:
             self.head_progression = nn.Linear(PROJ_DIM, n_diagnoses)
-            self.alpha_prog       = nn.Parameter(torch.tensor(0.0))
         if target_task in ['all', 'drug_rec']:
             self.head_drug_rec    = nn.Linear(PROJ_DIM + n_diagnoses, n_drugs)
-            self.alpha_drug       = nn.Parameter(torch.tensor(0.0))
+
+        # Static task-specific pooling weights (alphas)
+        self.alpha_mortality   = nn.Parameter(torch.tensor(0.0))
+        self.alpha_los         = nn.Parameter(torch.tensor(0.0))
+        self.alpha_readm       = nn.Parameter(torch.tensor(0.0))
+        self.alpha_prog        = nn.Parameter(torch.tensor(0.0))
+        self.alpha_drug        = nn.Parameter(torch.tensor(0.0))
 
     def forward(self, batch):
         emb           = batch['emb']            # (B, T, 128)
@@ -451,13 +473,12 @@ class EHRTransformer(nn.Module):
         
         h_global = trans_out[:, 0] # The evolved Patient Token
         
-
         out = {}
         
-        # Helper for task-specific pooling
+        # Helper for task-specific pooling with static alphas
         def get_task_repr(alpha_param):
-            a = torch.sigmoid(alpha_param)
-            pooled = a * h_global + (1 - a) * h_discharge
+            gate_val = torch.sigmoid(alpha_param)
+            pooled = gate_val * h_global + (1.0 - gate_val) * h_discharge
             return self.proj(pooled)
 
         # 1. Mortality
@@ -486,9 +507,6 @@ class EHRTransformer(nn.Module):
         # 5. Drug Recommendation (Dependent on Progression)
         if self.target_task in ['all', 'drug_rec']:
             s_drug = get_task_repr(self.alpha_drug)
-            # Linkage: Concat shared representation with Diagnosis Logits
-            # We use detach() on prog_logits if we don't want Drug gradients to affect Diagnosis weights
-            # But usually, joint training is better.
             combined_drug = torch.cat([s_drug, prog_logits], dim=-1)
             out['drug_rec'] = self.head_drug_rec(combined_drug)
         
@@ -783,6 +801,42 @@ class ClinicalGAT(nn.Module):
         out = self.ln(nodes + self.out_proj(out))
         return out
 
+import torch.nn.functional as F
+
+class BinaryFocalLoss(nn.Module):
+    """
+    Binary Focal Loss for highly imbalanced clinical classification tasks.
+    FL(p_t) = -alpha * (1 - p_t)^gamma * log(p_t)
+    """
+    def __init__(self, alpha: float = 0.25, gamma: float = 2.0, reduction: str = 'mean'):
+        super().__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        self.reduction = reduction
+
+    def forward(self, inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        inputs = inputs.float()
+        targets = targets.float()
+        
+        # Calculate standard BCE loss without reduction
+        bce_loss = F.binary_cross_entropy_with_logits(inputs, targets, reduction='none')
+        
+        p = torch.sigmoid(inputs)
+        p_t = p * targets + (1 - p) * (1 - targets) # Probability of correct class
+        
+        # Apply the focal modulating factor
+        loss = bce_loss * ((1 - p_t) ** self.gamma)
+        
+        if self.alpha >= 0:
+            alpha_t = self.alpha * targets + (1 - self.alpha) * (1 - targets)
+            loss = alpha_t * loss
+            
+        if self.reduction == 'mean':
+            return loss.mean()
+        elif self.reduction == 'sum':
+            return loss.sum()
+        return loss
+
 # Loss function
 class EHRLoss(nn.Module):
     """
@@ -809,6 +863,7 @@ class EHRLoss(nn.Module):
         w_readmission: float = 1.0,
         w_progression: float = 1.0,
         w_drug_rec:    float = 1.0,             # ← NEW
+        use_focal_loss_mortality: bool = False,
     ):
         super().__init__()
 
@@ -818,8 +873,12 @@ class EHRLoss(nn.Module):
         self.w_progression = w_progression
         self.w_drug_rec    = w_drug_rec         # ← NEW
 
-        # Scalar tasks — standard weighted BCE
-        self.crit_mortality   = nn.BCEWithLogitsLoss(pos_weight=pos_weight_mortality)
+        # Scalar tasks — standard weighted BCE or Focal Loss
+        if use_focal_loss_mortality:
+            self.crit_mortality = BinaryFocalLoss(alpha=0.25, gamma=2.0)
+        else:
+            self.crit_mortality = nn.BCEWithLogitsLoss(pos_weight=pos_weight_mortality)
+            
         self.crit_los         = nn.BCEWithLogitsLoss(pos_weight=pos_weight_los)
         self.crit_readmission = nn.BCEWithLogitsLoss(pos_weight=pos_weight_readmission)
 

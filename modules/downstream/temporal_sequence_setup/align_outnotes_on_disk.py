@@ -83,7 +83,7 @@ def process_patient(pid, timeline_dir):
     return True
 
 if __name__ == "__main__":
-    timeline_dir = Path("F:/Din/Study/Education/Projects/Thesis/data/Timelines")
+    timeline_dir = Path("data/Timeline_new")
     
     # Test on patient 10000032 first
     test_pid = "10000032"
