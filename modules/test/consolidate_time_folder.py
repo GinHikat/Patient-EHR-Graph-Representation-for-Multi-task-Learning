@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 load_dotenv()
 data_dir = os.getenv('DATA_DIR')
 TIMELINE_DIR = Path(os.path.join(data_dir, 'Timelines'))
-OUTPUT_FILE = 'patient_timelines.pt'
+OUTPUT_FILE = 'patient_timelines_new.pt'
 
 def consolidate():
     '''
