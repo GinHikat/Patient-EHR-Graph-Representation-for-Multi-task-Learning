@@ -5,7 +5,7 @@ import datetime
 
 # This script is a wrapper around EHR_training.py to run different ablation studies
 
-def run_experiment(mode, epochs=10, batch_size=64, num_workers=4, model_type='transformer', patience=7, task='all', no_pos_weight=False):
+def run_experiment(mode, epochs=10, batch_size=64, num_workers=4, model_type='lstm', patience=7, task='all', no_pos_weight=False, use_focal_loss=True):
     print(f"\n" + "="*50)
     print(f"RUNNING EXPERIMENT: {mode}")
     print(f"="*50)
@@ -22,6 +22,8 @@ def run_experiment(mode, epochs=10, batch_size=64, num_workers=4, model_type='tr
     ]
     if no_pos_weight:
         cmd.append("--no_pos_weight")
+    if use_focal_loss:
+        cmd.append("--use_focal_loss")
     
     # We will pass the ablation mode as a new argument if we update EHR_training.py 
     # Or we can use environment variables to communicate with the training script
@@ -40,7 +42,12 @@ if __name__ == "__main__":
     parser.add_argument('--batch_size', type=int, default=64)
     parser.add_argument('--num_workers', type=int, default=0)
     parser.add_argument('--patience', type=int, default=20, help='Early stopping patience')
+    parser.add_argument('--model_type', type=str, default='lstm', choices=['lstm', 'transformer', 'transformer_base'], help='Model type to use for ablation studies')
+    parser.add_argument('--no_focal_loss', action='store_true', help='Disable Focal Loss and use standard BCE instead')
     args = parser.parse_args()
+    
+    # Enable Focal Loss by default unless --no_focal_loss is set
+    use_focal_loss = not args.no_focal_loss
     
     experiments = []
     if args.group == 'leakage':
@@ -57,10 +64,10 @@ if __name__ == "__main__":
         # Run 5 independent models, one for each task
         tasks = ['mortality', 'los_7d', 'readmission', 'progression', 'drug_rec']
         for task in tasks:
-            run_experiment(f"independent_{task}", epochs=args.epochs, batch_size=args.batch_size, num_workers=args.num_workers, patience=args.patience, task=task)
+            run_experiment(f"independent_{task}", epochs=args.epochs, batch_size=args.batch_size, num_workers=args.num_workers, model_type=args.model_type, patience=args.patience, task=task, use_focal_loss=use_focal_loss)
         sys.exit(0)
     elif args.group == 'equal_loss':
-        run_experiment("equal_loss", epochs=args.epochs, batch_size=args.batch_size, num_workers=args.num_workers, patience=args.patience, no_pos_weight=True)
+        run_experiment("equal_loss", epochs=args.epochs, batch_size=args.batch_size, num_workers=args.num_workers, model_type=args.model_type, patience=args.patience, no_pos_weight=True, use_focal_loss=use_focal_loss)
         sys.exit(0)
     elif args.group == 'all':
         # Standard data/architecture ablations
@@ -75,17 +82,17 @@ if __name__ == "__main__":
             'no_transfers'
         ]
         for exp in experiments:
-            run_experiment(exp, epochs=args.epochs, batch_size=args.batch_size, num_workers=args.num_workers, patience=args.patience)
+            run_experiment(exp, epochs=args.epochs, batch_size=args.batch_size, num_workers=args.num_workers, model_type=args.model_type, patience=args.patience, use_focal_loss=use_focal_loss)
         
         # Equal loss ablation
-        run_experiment("equal_loss", epochs=args.epochs, batch_size=args.batch_size, num_workers=args.num_workers, patience=args.patience, no_pos_weight=True)
+        run_experiment("equal_loss", epochs=args.epochs, batch_size=args.batch_size, num_workers=args.num_workers, model_type=args.model_type, patience=args.patience, no_pos_weight=True, use_focal_loss=use_focal_loss)
         
         # Independent task training ablations
         tasks = ['mortality', 'los_7d', 'readmission', 'progression', 'drug_rec']
         for task in tasks:
-            run_experiment(f"independent_{task}", epochs=args.epochs, batch_size=args.batch_size, num_workers=args.num_workers, patience=args.patience, task=task)
+            run_experiment(f"independent_{task}", epochs=args.epochs, batch_size=args.batch_size, num_workers=args.num_workers, model_type=args.model_type, patience=args.patience, task=task, use_focal_loss=use_focal_loss)
             
         sys.exit(0)
         
     for exp in experiments:
-        run_experiment(exp, epochs=args.epochs, batch_size=args.batch_size, num_workers=args.num_workers, patience=args.patience)
+        run_experiment(exp, epochs=args.epochs, batch_size=args.batch_size, num_workers=args.num_workers, model_type=args.model_type, patience=args.patience, use_focal_loss=use_focal_loss)

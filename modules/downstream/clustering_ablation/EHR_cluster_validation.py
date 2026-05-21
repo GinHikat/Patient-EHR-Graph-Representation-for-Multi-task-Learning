@@ -35,35 +35,71 @@ def main():
     is_patient_level = 'patient_id' in assignments.columns
     
     if is_patient_level:
-        print("Detected patient-level clusters. Aggregating outcomes per patient...")
+        print("Detected patient-level clusters. Aggregating patient utilization profiles...")
         # Aggregating training data to patient level
         train_df_patient = train_df.groupby('patient_id').agg({
-            'inhospital_dead': 'max',   # 1 if they died in ANY admission
-            'length_of_stay': 'mean',   # Average stay length
-            'readmission_30d': 'max',   # 1 if they were ever readmitted
+            'id': 'count',              # Number of admissions for this patient
+            'length_of_stay': 'mean',   # Average stay length across their visits
+            'inhospital_dead': 'max',   # Necessary for KM plotting
             'drg_severity': 'max'       # Max severity recorded
-        }).reset_index()
+        }).rename(columns={'id': 'num_admissions'}).reset_index()
         df = assignments.merge(train_df_patient, on='patient_id')
         id_col = 'patient_id'
+        
+        # Load patient age demographics from patient.parquet
+        patient_meta_path = os.path.join(args.data_dir, 'patient.parquet')
+        if os.path.exists(patient_meta_path):
+            patient_meta = pd.read_parquet(patient_meta_path)
+            patient_meta['id'] = patient_meta['id'].astype(str)
+            df = df.merge(patient_meta[['id', 'age']], left_on='patient_id', right_on='id', how='left')
+        
+        # New Summary Aggregation (Clean report for USER)
+        summary = df.groupby('cluster').agg({
+            id_col: 'count',
+            'num_admissions': 'mean',
+            'length_of_stay': 'mean',
+            'age': 'mean' if 'age' in df.columns else id_col
+        }).rename(columns={
+            id_col: 'N_Patients', 
+            'num_admissions': 'Avg_Admissions', 
+            'length_of_stay': 'Mean_LOS',
+            'age': 'Avg_Age'
+        })
+        if 'id' in summary.columns: # fallback if age not in df
+            summary = summary.drop(columns=['id'])
     else:
         print("Detected admission-level clusters.")
         df = assignments.merge(train_df, left_on='adm_id', right_on='id')
         id_col = 'id'
-    
+        
+        # Load patient age demographics from patient.parquet
+        patient_meta_path = os.path.join(args.data_dir, 'patient.parquet')
+        if os.path.exists(patient_meta_path):
+            patient_meta = pd.read_parquet(patient_meta_path)
+            patient_meta['id'] = patient_meta['id'].astype(str)
+            df = df.merge(patient_meta[['id', 'age']], left_on='patient_id', right_on='id', how='left')
+            
+        summary = df.groupby('cluster').agg({
+            id_col: 'count',
+            'inhospital_dead': 'mean',
+            'length_of_stay': 'mean',
+            'readmission_30d': 'mean',
+            'age': 'mean' if 'age' in df.columns else id_col
+        }).rename(columns={
+            id_col: 'N_Admissions', 
+            'inhospital_dead': 'Mortality%', 
+            'readmission_30d': 'Readm%',
+            'age': 'Avg_Age'
+        })
+        summary['Mortality%'] *= 100
+        summary['Readm%'] *= 100
+        if 'id' in summary.columns: # fallback if age not in df
+            summary = summary.drop(columns=['id'])
+
     # Outcome Distribution (Section 4.2)
     print("\n" + "="*30)
     print(f"CLUSTER OUTCOME DISTRIBUTIONS ({'PATIENT' if is_patient_level else 'ADMISSION'} LEVEL)")
     print("="*30)
-    
-    summary = df.groupby('cluster').agg({
-        id_col: 'count',
-        'inhospital_dead': 'mean',
-        'length_of_stay': 'mean',
-        'readmission_30d': 'mean'
-    }).rename(columns={id_col: 'N', 'inhospital_dead': 'Mortality%', 'readmission_30d': 'Readm%'})
-    
-    summary['Mortality%'] *= 100
-    summary['Readm%'] *= 100
     
     print(summary)
     summary.to_csv(os.path.join(output_dir, 'cluster_outcome_summary.csv'))

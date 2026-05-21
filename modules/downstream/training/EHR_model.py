@@ -140,9 +140,26 @@ class EHRDataset(Dataset):
             emb = emb[mask]
             dt  = dt[mask]
         elif self.ablation_mode == 'first_48h':
-            # Calculate cumulative time and keep only notes within first 2 days
+            # Calculate cumulative time and keep only notes within first 48h of the ADMIT event
+            admit_pos = None
+            for i, entry in enumerate(meta[:len(dt)]):
+                if entry['type'] == 'ADMIT' and str(entry.get('adm_id')) == adm_id:
+                    admit_pos = i
+                    break
+            
+            if admit_pos is None:
+                # Fallback: find first event belonging to this admission
+                for i, entry in enumerate(meta[:len(dt)]):
+                    if str(entry.get('adm_id')) == adm_id:
+                        admit_pos = i
+                        break
+            
+            if admit_pos is None:
+                admit_pos = 0
+                
             cum_time = np.cumsum(dt)
-            mask = cum_time <= 2.0 # Assuming dt is in days
+            admit_time = cum_time[admit_pos]
+            mask = (cum_time - admit_time) <= 2.0 # 2.0 days = 48h
             emb = emb[mask]
             dt  = dt[mask]
         elif self.ablation_mode == 'static_only':
