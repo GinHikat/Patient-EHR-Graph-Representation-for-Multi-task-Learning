@@ -126,10 +126,25 @@ class EHRDataset(Dataset):
         if np.isnan(emb).any():
             return None
 
-        # Slice and copy to ensure we aren't holding mmap handles in memory
-        # We use + 2 to include both the DISCHARGE token and the admission_emb summary
-        emb = emb[:discharge_pos + 2]
-        dt  = dt[:discharge_pos + 2]
+        # Slice to include up to DISCHARGE (discharge_pos) and any trailing tokens of this admission
+        meta_sliced = meta[:discharge_pos + 2]
+        
+        # Identify and remove the admission_emb of the current stay (leakage prevention)
+        # We search backwards from the discharge token (discharge_pos - 1) to find the last admission_emb right before it
+        remove_idx = None
+        for i in range(discharge_pos - 1, -1, -1):
+            entry = meta_sliced[i]
+            if entry.get('type') == 'admission_emb' and str(entry.get('adm_id')) == adm_id:
+                remove_idx = i
+                break
+                
+        keep_indices = list(range(len(meta_sliced)))
+        if remove_idx is not None:
+            keep_indices.remove(remove_idx)
+            
+        emb = emb[keep_indices].copy()
+        dt  = dt[keep_indices].copy()
+        meta = [meta_sliced[idx] for idx in keep_indices]
 
         #─ ABLATION: Causal Slicing & Modality─
         if self.ablation_mode == 'last_24h':
@@ -196,10 +211,11 @@ class EHRDataset(Dataset):
                 if entry.get('type', '').upper() == 'TRANSFER':
                     emb[i] = 0
         elif self.ablation_mode == 'no_last_event':
-            # Remove only the very last event (the admission_emb summary)
-            if len(emb) > 0:
-                emb = emb[:-1]
-                dt  = dt[:-1]
+            # Zero out all admission_emb (AdmissionEvent) tokens in the entire timeline sequence
+            emb = emb.copy()
+            for i, entry in enumerate(meta[:len(emb)]):
+                if entry.get('type') == 'admission_emb':
+                    emb[i] = 0
         elif self.ablation_mode == 'no_future':
             # Remove both the DISCHARGE token and the admission_emb summary
             if len(emb) >= 2:
@@ -717,39 +733,47 @@ class EHRModel(nn.Module):
         patient_vec   = batch['patient_vec']    # (B, 64)
         admission_vec = batch['admission_vec']  # (B, 64)
 
-        # Apply exponential Δt decay
-        # λ = softplus(log_lambda) ensures λ > 0
-        lam = torch.nn.functional.softplus(self.log_lambda)
-
-        # decay shape: (B, T, 1) → broadcast over 128 dims
-        decay = torch.exp(-lam * dt).unsqueeze(-1)   # (B, T, 1)
-        emb   = emb * decay                           # (B, T, 128)
-
-        # lstm with packed sequence (ignores padding)
-        packed = pack_padded_sequence(
-            emb, lengths.cpu(), batch_first=True, enforce_sorted=False
-        )
-
-        # lstm pass
-        if self.use_gradient_checkpointing and self.training:
-            from torch.utils.checkpoint import checkpoint
-            def lstm_forward(x):
-                out, _ = self.lstm(x)
-                return out
-            lstm_out_packed = checkpoint(lstm_forward, packed, use_reentrant=False)
+        if batch.get('ablation_mode') == 'no_temporal':
+            # BAG OF EVENTS ABLATION FOR LSTM: Skip decay and LSTM, just do masked mean pool
+            # mask active positions based on true sequence lengths
+            mask = torch.arange(emb.size(1), device=emb.device).unsqueeze(0) < lengths.unsqueeze(1)
+            mask = mask.unsqueeze(-1) # (B, T, 1)
+            h_mean = (emb * mask).sum(dim=1) / lengths.unsqueeze(-1).clamp(min=1)
+            h_discharge = torch.cat([h_mean, h_mean], dim=-1) # (B, 256)
         else:
-            lstm_out_packed, _ = self.lstm(packed)
+            # Apply exponential Δt decay
+            # λ = softplus(log_lambda) ensures λ > 0
+            lam = torch.nn.functional.softplus(self.log_lambda)
 
-        lstm_out, _ = nn.utils.rnn.pad_packed_sequence(
-            lstm_out_packed, batch_first=True
-        )                                            # (B, T, 256)
+            # decay shape: (B, T, 1) → broadcast over 128 dims
+            decay = torch.exp(-lam * dt).unsqueeze(-1)   # (B, T, 1)
+            emb   = emb * decay                           # (B, T, 128)
 
-        # Slice hidden state at last real token (DISCHARGE position)
-        # lengths[i] - 1 is the index of the DISCHARGE token since we slice
-        # the timeline up to and including DISCHARGE in EHRDataset
-        idx          = (lengths - 1).clamp(min=0)             # (B,)
-        idx_expanded = idx.view(-1, 1, 1).expand(-1, 1, HIDDEN_SIZE)
-        h_discharge  = lstm_out.gather(1, idx_expanded).squeeze(1)  # (B, 256)
+            # lstm with packed sequence (ignores padding)
+            packed = pack_padded_sequence(
+                emb, lengths.cpu(), batch_first=True, enforce_sorted=False
+            )
+
+            # lstm pass
+            if self.use_gradient_checkpointing and self.training:
+                from torch.utils.checkpoint import checkpoint
+                def lstm_forward(x):
+                    out, _ = self.lstm(x)
+                    return out
+                lstm_out_packed = checkpoint(lstm_forward, packed, use_reentrant=False)
+            else:
+                lstm_out_packed, _ = self.lstm(packed)
+
+            lstm_out, _ = nn.utils.rnn.pad_packed_sequence(
+                lstm_out_packed, batch_first=True
+            )                                            # (B, T, 256)
+
+            # Slice hidden state at last real token (DISCHARGE position)
+            # lengths[i] - 1 is the index of the DISCHARGE token since we slice
+            # the timeline up to and including DISCHARGE in EHRDataset
+            idx          = (lengths - 1).clamp(min=0)             # (B,)
+            idx_expanded = idx.view(-1, 1, 1).expand(-1, 1, HIDDEN_SIZE)
+            h_discharge  = lstm_out.gather(1, idx_expanded).squeeze(1)  # (B, 256)
 
         # Concat static vectors + project
         combined = torch.cat([h_discharge, patient_vec, admission_vec], dim=-1)
