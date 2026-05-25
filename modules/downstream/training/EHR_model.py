@@ -130,10 +130,8 @@ class EHRDataset(Dataset):
         meta_sliced = meta[:discharge_pos + 2]
         
         # Identify and remove the admission_emb of the current stay (leakage prevention)
-        # We search backwards from the discharge token (discharge_pos - 1) to find the last admission_emb right before it
         remove_idx = None
-        for i in range(discharge_pos - 1, -1, -1):
-            entry = meta_sliced[i]
+        for i, entry in enumerate(meta_sliced):
             if entry.get('type') == 'admission_emb' and str(entry.get('adm_id')) == adm_id:
                 remove_idx = i
                 break

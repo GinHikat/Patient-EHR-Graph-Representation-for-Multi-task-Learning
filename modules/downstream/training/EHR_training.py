@@ -18,8 +18,33 @@ import json as json_lib
 from pathlib import Path
 from dotenv import load_dotenv
 import argparse
+from contextlib import contextmanager
+
+try:
+    import bitsandbytes as bnb
+except ImportError:
+    bnb = None
 
 load_dotenv()
+
+def get_autocast_dtype():
+    if torch.cuda.is_available():
+        if torch.cuda.is_bf16_supported():
+            return torch.bfloat16
+    return torch.float16
+
+@contextmanager
+def autocast_context(device_type='cuda'):
+    if device_type == 'cuda' and not torch.cuda.is_available():
+        yield
+    else:
+        dtype = get_autocast_dtype()
+        if hasattr(torch, 'amp') and hasattr(torch.amp, 'autocast'):
+            with torch.amp.autocast(device_type, dtype=dtype):
+                yield
+        else:
+            with torch.cuda.amp.autocast(dtype=dtype):
+                yield
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.abspath(os.path.join(current_dir, "../../../"))
@@ -117,7 +142,7 @@ def evaluate(model, loader, criterion, device):
             if batch is None: continue
             batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
             
-            with torch.amp.autocast('cuda'):
+            with autocast_context('cuda'):
                 logits = model(batch)
                 loss, loss_dict = criterion(logits, batch)
                 
@@ -126,33 +151,33 @@ def evaluate(model, loader, criterion, device):
 
             # Mortality
             if 'mortality' in logits:
-                all_logits['mortality'].append(torch.sigmoid(logits['mortality']).squeeze(1).cpu().numpy())
+                all_logits['mortality'].append(torch.sigmoid(logits['mortality']).squeeze(1).float().cpu().numpy())
                 all_labels['mortality'].append(batch['mortality'].cpu().numpy())
 
             # LOS
             if 'los_7d' in logits:
-                all_logits['los_7d'].append(torch.sigmoid(logits['los_7d']).squeeze(1).cpu().numpy())
+                all_logits['los_7d'].append(torch.sigmoid(logits['los_7d']).squeeze(1).float().cpu().numpy())
                 all_labels['los_7d'].append(batch['los_7d'].cpu().numpy())
 
             # Readmission (Mask missing -1 labels)
             if 'readmission' in logits:
                 readm_mask = batch['readmission'] >= 0
                 if readm_mask.any():
-                    all_logits['readmission'].append(torch.sigmoid(logits['readmission']).squeeze(1)[readm_mask].cpu().numpy())
+                    all_logits['readmission'].append(torch.sigmoid(logits['readmission']).squeeze(1)[readm_mask].float().cpu().numpy())
                     all_labels['readmission'].append(batch['readmission'][readm_mask].cpu().numpy())
 
             # Progression (Mask empty samples)
             if 'progression' in logits:
                 prog_mask = batch['progression'].sum(dim=-1) > 0
                 if prog_mask.any():
-                    all_logits['progression'].append(torch.sigmoid(logits['progression'])[prog_mask].cpu().numpy())
+                    all_logits['progression'].append(torch.sigmoid(logits['progression'])[prog_mask].float().cpu().numpy())
                     all_labels['progression'].append(batch['progression'][prog_mask].cpu().numpy())
 
             # Drug rec (Mask empty samples)
             if 'drug_rec' in logits:
                 drug_mask = batch['drug_rec'].sum(dim=-1) > 0
                 if drug_mask.any():
-                    all_logits['drug_rec'].append(torch.sigmoid(logits['drug_rec'])[drug_mask].cpu().numpy())
+                    all_logits['drug_rec'].append(torch.sigmoid(logits['drug_rec'])[drug_mask].float().cpu().numpy())
                     all_labels['drug_rec'].append(batch['drug_rec'][drug_mask].cpu().numpy())
 
     metrics = {}
@@ -237,8 +262,11 @@ def train(
     history           = []
     recent_checkpoints = [] # Keep last 10 epoch checkpoints in CPU memory for Stochastic Weight Averaging (SWA)
     
-    # Mixed Precision Scaler
-    scaler = torch.amp.GradScaler('cuda')
+    # Mixed Precision Scaler (Version-Agnostic)
+    if hasattr(torch, 'amp') and hasattr(torch.amp, 'GradScaler'):
+        scaler = torch.amp.GradScaler('cuda', enabled=(DEVICE.type == 'cuda'))
+    else:
+        scaler = torch.cuda.amp.GradScaler(enabled=(DEVICE.type == 'cuda'))
 
     # Initialize/Clear metrics log file only if starting from scratch
     log_mode = 'w' if start_epoch == 1 else 'a'
@@ -277,7 +305,7 @@ def train(
             optimizer.zero_grad()
 
             # Autocast for Mixed Precision
-            with torch.amp.autocast('cuda'):
+            with autocast_context('cuda'):
                 logits = model(batch)
                 loss, loss_dict = criterion(logits, batch)
 
@@ -449,11 +477,11 @@ if __name__ == '__main__':
         drug_to_idx = json_lib.load(f)
 
     try:
-        patient_cache   = torch.load(PATIENT_CACHE_PATH, map_location='cpu', mmap=True)
-        admission_cache = torch.load(ADMISSION_CACHE_PATH, map_location='cpu', mmap=True)
+        patient_cache   = torch.load(PATIENT_CACHE_PATH, map_location='cpu', mmap=True, weights_only=False)
+        admission_cache = torch.load(ADMISSION_CACHE_PATH, map_location='cpu', mmap=True, weights_only=False)
     except Exception:
-        patient_cache   = torch.load(PATIENT_CACHE_PATH, map_location='cpu')
-        admission_cache = torch.load(ADMISSION_CACHE_PATH, map_location='cpu')
+        patient_cache   = torch.load(PATIENT_CACHE_PATH, map_location='cpu', weights_only=False)
+        admission_cache = torch.load(ADMISSION_CACHE_PATH, map_location='cpu', weights_only=False)
 
     print('Building datasets...')
     train_dataset = EHRDataset(
@@ -532,12 +560,25 @@ if __name__ == '__main__':
         
         if os.path.exists(ckpt_path):
             print(f"Resuming from checkpoint: {ckpt_path}")
-            state_dict = torch.load(ckpt_path, map_location=DEVICE)
+            state_dict = torch.load(ckpt_path, map_location=DEVICE, weights_only=True)
             model.load_state_dict(state_dict)
         else:
             print(f"ERROR: Checkpoint file '{ckpt_path}' not found!")
             sys.exit(1)
 
+    # PyTorch 2.0+ torch.compile speedup (Ampere optimized)
+    if hasattr(torch, 'compile') and DEVICE.type == 'cuda' and args.model_type != 'lstm':
+        import shutil
+        has_compiler = shutil.which("gcc") is not None or shutil.which("clang") is not None
+        if has_compiler:
+            try:
+                print("Compiling model for peak Ampere performance...")
+                torch.set_float32_matmul_precision('high')
+                model = torch.compile(model)
+            except Exception as e:
+                print(f"torch.compile failed: {e}. Running in eager mode.")
+        else:
+            print("No C compiler (gcc/clang) found in system PATH. Skipping torch.compile (running in eager mode).")
     # Pos weights
     if args.no_pos_weight:
         pw_mort = pw_los = pw_readm = 1.0
@@ -617,7 +658,7 @@ if __name__ == '__main__':
     best_model_path = os.path.join(CHECKPOINT_DIR, 'best_model.pt')
     best_metrics = None
     if os.path.exists(best_model_path):
-        model.load_state_dict(torch.load(best_model_path, map_location=DEVICE))
+        model.load_state_dict(torch.load(best_model_path, map_location=DEVICE, weights_only=True))
         print(f"Loaded best validation model weights from {best_model_path}")
         best_metrics = evaluate(model, test_loader, criterion, DEVICE)
 
@@ -625,7 +666,7 @@ if __name__ == '__main__':
     swa_model_path = os.path.join(CHECKPOINT_DIR, 'swa_model.pt')
     swa_metrics = None
     if os.path.exists(swa_model_path):
-        model.load_state_dict(torch.load(swa_model_path, map_location=DEVICE))
+        model.load_state_dict(torch.load(swa_model_path, map_location=DEVICE, weights_only=True))
         print(f"Loaded SWA model weights from {swa_model_path}")
         swa_metrics = evaluate(model, test_loader, criterion, DEVICE)
 
