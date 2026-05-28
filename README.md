@@ -25,7 +25,7 @@ graph TD
 
 ## 📁 Repository Map
 
-Below is the updated layout of the codebase, outlining the logical separation of core processing pipelines, local data caches, model definitions, and the full-stack visualization web app.
+Below is the layout of the codebase, outlining the logical separation of core processing pipelines, local data caches, model definitions, and the full-stack visualization web app.
 
 ```
 .
@@ -42,7 +42,7 @@ Below is the updated layout of the codebase, outlining the logical separation of
 │   │   └── utils.py              # Text cleaning and preprocessing helper utilities
 │   │
 │   ├── graph_construction/       # Neo4j Ingestion & Graph Snapshot Creation
-│   │   ├── enrich/               # scripts enriching Neo4j with disease-disease and drug links
+│   │   ├── enrich/               # Scripts enriching Neo4j with disease-disease and drug links
 │   │   ├── nodes/                # Loader scripts for admissions, transfers, and clinical nodes
 │   │   ├── graph_snapshot.py     # Database orchestrator dumping schema/snapshots
 │   │   └── post_check.cypher     # Cypher validation queries ensuring graph integrity
@@ -63,6 +63,10 @@ Below is the updated layout of the codebase, outlining the logical separation of
 │   │   └── training/             # Multi-task outcome models (Mortality, LOS, Readmission)
 │   │
 │   └── test/                     # Debugging & Verification Scripts
+│       ├── audit_nans.py         # Check loaded timelines for NaNs/null values
+│       ├── check_outnotes_kg.py  # Check note-extracted nodes in external KG
+│       ├── event_length.py       # Analyze sequence length distributions
+│       └── test_timeline.py      # Chronological and shape validation checks
 │
 ├── notebooks/                    # Jupyter Experimentation Playgrounds
 ├── plan/                         # Architecture Blueprints & Implementation Roadmaps
@@ -178,6 +182,28 @@ python modules/downstream/training/EHR_training.py
 
 ---
 
+## 📊 Quantitative Results & Benchmarks
+
+The proposed patient representation framework is evaluated across **four per-admission tasks** using the MIMIC-IV dataset and compared against **nine recent state-of-the-art (SOTA) clinical machine learning methods** from 2022 to 2025:
+
+| Model / Paper Reference         | Mortality AUROC | Mortality AUPR | Readmission AUROC | Readmission AUPR | Drug Rec AUROC | Drug Rec AUPR | Diag Prog AUROC | Diag Prog AUPR |
+| :------------------------------ | :-------------: | :------------: | :---------------: | :--------------: | :------------: | :------------: | :-------------: | :------------: |
+| **This work**             | **0.99** | **0.79** |       0.89       |  **0.79**  |      0.77      |      0.50      |      0.87      | **0.20** |
+| Daphne et al. (2025)            |      0.93      |      0.65      |  **0.95**  |       0.75       |       —       |       —       |       —       |       —       |
+| Deng et al. (2022)              |      0.87      |       —       |       0.64       |        —        |       —       |       —       |       —       |       —       |
+| Chan et al. (2024)              |      0.71      |      0.05      |       0.69       |       0.70       | **0.98** |      0.70      |       —       |       —       |
+| Jiang et al. (2023) [GraphCare] |      0.73      |      0.07      |       0.82       |        —        |      0.95      | **0.77** |       —       |       —       |
+| Gupta et al. (2022)             |      0.87      |      0.55      |       0.77       |       0.55       |       —       |       —       |       —       |       —       |
+| Rohr et al. (2024)              |       —       |       —       |        —        |        —        |       —       |       —       |      0.87      |      0.17      |
+| Chen et al. (2025)              |      0.86      |      0.33      |       0.74       |       0.27       |       —       |       —       |       —       |       —       |
+| Bui et al. (2024)               |      0.87      |      0.52      |        —        |        —        |       —       |       —       |       —       |       —       |
+| Yang et al. (2024) [MPLite]     |       —       |       —       |        —        |        —        |       —       |       —       | **0.88** |       —       |
+
+> [!NOTE]
+> **Sequential Priority in EHR:** The recurrent architecture demonstrates robust suitability for unidirectional, chronologically causal medical histories, capturing patient timelines effectively for clinical predictions.
+
+---
+
 ## 🖥️ Running the Visualization Web Application
 
 ### 1. Launch the FastAPI Backend
@@ -230,7 +256,7 @@ python -m pytest test
 ## 📊 Prerequisites & Versions
 
 | Component            | Version / Requirement                                                  |
-| -------------------- | ---------------------------------------------------------------------- |
+| :------------------- | :--------------------------------------------------------------------- |
 | **Python**     | `3.10+`                                                              |
 | **Node.js**    | `v16+` (npm `v8+`)                                                 |
 | **Neo4j**      | Local database or Aura Cloud instance (ensure APOC plugins are active) |

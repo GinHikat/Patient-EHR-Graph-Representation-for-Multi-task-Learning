@@ -840,7 +840,6 @@ class ClinicalGAT(nn.Module):
         out = self.ln(nodes + self.out_proj(out))
         return out
 
-import torch.nn.functional as F
 
 class BinaryFocalLoss(nn.Module):
     """
