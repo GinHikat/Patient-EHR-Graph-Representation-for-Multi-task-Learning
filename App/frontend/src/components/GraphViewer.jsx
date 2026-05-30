@@ -138,7 +138,7 @@ const GraphViewer = ({
     const fetchNodeTypes = async () => {
       try {
         const response = await axios.get(`${API_BASE_URL}/node_types`);
-        setNodeTypes(["All", ...response.data.node_types]);
+        setNodeTypes(["All", ...response.data.node_types.filter(type => type !== "Test")]);
       } catch (err) {
         console.error("Failed to fetch node types", err);
       }
@@ -484,7 +484,7 @@ const GraphViewer = ({
             </div>
           </div>
 
-          <div className="control-group">
+          <div className="control-group filter-type-group">
             <div className="filter-header">
               <label>Filter by Node Type</label>
             </div>
@@ -517,27 +517,7 @@ const GraphViewer = ({
             />
           </div>
 
-          {/* Dynamic Legend based on visible nodes */}
-          <div className="legend">
-            <label
-              style={{ fontSize: "0.75rem", marginBottom: "4px", fontWeight: 700 }}
-            >
-              All Types
-            </label>
-            <div className="legend-grid">
-              {nodeTypes
-                .filter((type) => type !== "All" && type !== "Test")
-                .map((label) => (
-                  <div key={label} className="legend-item" title={label}>
-                    <div
-                      className="legend-color"
-                      style={{ backgroundColor: getColor(label) }}
-                    ></div>
-                    <span>{label}</span>
-                  </div>
-                ))}
-            </div>
-            </div>
+          {/* Legend removed for cleaner sidebar workspace */}
           </div>
         )}
       </div>
@@ -554,60 +534,70 @@ const GraphViewer = ({
         nodeRelSize={7}
         nodeCanvasObject={(node, ctx, globalScale) => {
           const label = getEffectiveLabel(node.labels);
-          const isHighlighted =
-            highlightNodes.size === 0 || highlightNodes.has(node);
+          const isHighlighted = highlightNodes.size === 0 || highlightNodes.has(node);
           const isHovered = hoverNode === node;
           const color = getColor(label);
-          const fontSize = 12 / globalScale;
-          const radius = 6;
+          const radius = 6.5;
 
+          ctx.save();
           // Dim nodes that are not highlighted
-          ctx.globalAlpha = isHighlighted ? 1 : 0.15;
+          ctx.globalAlpha = isHighlighted ? 1.0 : 0.12;
 
-          // Draw node shadow/glow if highlighted or hovered
+          // Advanced High-Contrast Shadow and Glow System
           if (isHighlighted || isHovered) {
-            ctx.beginPath();
-            ctx.arc(node.x, node.y, radius + 1, 0, 2 * Math.PI, false);
-            ctx.fillStyle = isHovered
-              ? "rgba(255, 255, 255, 0.3)"
-              : "rgba(0, 0, 0, 0.3)";
-            ctx.fill();
+            ctx.shadowColor = color;
+            ctx.shadowBlur = (isHovered ? 16 : 8) / Math.sqrt(globalScale);
           }
 
-          // Soft shadow for Light Mode
-          if (theme === "light") {
-            ctx.beginPath();
-            ctx.arc(node.x + 0.5/globalScale, node.y + 0.5/globalScale, radius + 1, 0, 2 * Math.PI, false);
-            ctx.fillStyle = "rgba(0, 0, 0, 0.15)";
-            ctx.fill();
-          }
-
-          // Draw main circle
+          // Draw node glow circle background
           ctx.beginPath();
           ctx.arc(node.x, node.y, radius, 0, 2 * Math.PI, false);
           ctx.fillStyle = color;
           ctx.fill();
 
-          // Draw white border for high contrast
-          ctx.strokeStyle = "white";
-          ctx.lineWidth = (isHovered ? 2 : 1) / globalScale;
+          // Reset shadow so borders and inner text don't bleed blur
+          ctx.shadowBlur = 0;
+
+          // Draw outer high-contrast ring
+          ctx.strokeStyle = theme === "light" 
+            ? "rgba(15, 23, 42, 0.9)" // high contrast dark outline in light mode
+            : "rgba(255, 255, 255, 0.95)"; // vibrant white outline in dark mode
+          ctx.lineWidth = (isHovered ? 2.5 : 1.25) / globalScale;
           ctx.stroke();
 
-          // Reset alpha for following operations
-          ctx.globalAlpha = 1;
+          // Add a elegant glossy inner dot or radial shine
+          ctx.beginPath();
+          ctx.arc(node.x - radius * 0.25, node.y - radius * 0.25, radius * 0.25, 0, 2 * Math.PI, false);
+          ctx.fillStyle = "rgba(255, 255, 255, 0.55)";
+          ctx.fill();
+
+          ctx.restore();
         }}
         nodePointerAreaPaint={(node, color, ctx) => {
           ctx.fillStyle = color;
           ctx.beginPath();
-          ctx.arc(node.x, node.y, 7, 0, 2 * Math.PI, false);
+          ctx.arc(node.x, node.y, 8, 0, 2 * Math.PI, false);
           ctx.fill();
         }}
-        linkWidth={(link) => (highlightLinks.has(link) ? 5 : 4)}
+        linkWidth={(link) => {
+          const isHighlighted = highlightLinks.size === 0 || highlightLinks.has(link);
+          if (isHighlighted) {
+            return highlightLinks.has(link) ? 3.5 : 1.5;
+          }
+          return 0.8;
+        }}
         linkColor={(link) => {
-          if (highlightLinks.has(link)) return "rgba(59, 130, 246, 0.9)";
-          return theme === "light" 
-            ? "rgba(0, 0, 0, 0.4)" // darker black in light mode
-            : "rgba(255, 255, 255, 0.2)";
+          const isHighlighted = highlightLinks.has(link);
+          if (isHighlighted) {
+            return theme === "light"
+              ? "rgba(37, 99, 235, 0.95)" // vibrant blue highlight
+              : "rgba(96, 165, 250, 0.95)";
+          }
+          
+          // Regular links: crisp and visible
+          return theme === "light"
+            ? "rgba(15, 23, 42, 0.35)" // darker, highly visible gray-black lines
+            : "rgba(255, 255, 255, 0.25)"; // bright white-gray lines
         }}
         linkDirectionalArrowLength={0.1}
         linkDirectionalParticles={(link) => (highlightLinks.has(link) ? 4 : 0)}
@@ -619,45 +609,26 @@ const GraphViewer = ({
           </div>
         `}
         linkCanvasObjectMode={() => "after"}
-        linkCanvasObject={(link, ctx) => {
+        linkCanvasObject={(link, ctx, globalScale) => {
           const start = link.source;
           const end = link.target;
           if (typeof start !== "object" || typeof end !== "object") return;
 
-          // 1. Draw smaller, sharp text at the CENTER
-          const textPos = {
-            x: start.x + (end.x - start.x) * 0.5,
-            y: start.y + (end.y - start.y) * 0.5
-          };
-
           const relLink = { x: end.x - start.x, y: end.y - start.y };
           const linkLen = Math.hypot(relLink.x, relLink.y);
-          let textAngle = Math.atan2(relLink.y, relLink.x);
-          
-          if (textAngle > Math.PI / 2) textAngle = -(Math.PI - textAngle);
-          if (textAngle < -Math.PI / 2) textAngle = -(-Math.PI - textAngle);
+          if (linkLen === 0) return;
 
           const isHighlighted = highlightLinks.has(link);
           const color = isHighlighted
-            ? (theme === "light" ? "rgba(37, 99, 235, 1)" : "rgba(96, 165, 250, 1)")
-            : (theme === "light" ? "rgba(0, 0, 0, 0.5)" : "rgba(255, 255, 255, 0.4)");
+            ? (theme === "light" ? "rgba(37, 99, 235, 1.0)" : "rgba(96, 165, 250, 1.0)")
+            : (theme === "light" ? "rgba(15, 23, 42, 0.7)" : "rgba(255, 255, 255, 0.55)");
 
-          // Draw Text
-          ctx.save();
-          ctx.translate(textPos.x, textPos.y);
-          ctx.rotate(textAngle);
-          ctx.font = `3px Inter, sans-serif`; // microscopic font
-          ctx.textAlign = "center";
-          ctx.textBaseline = "middle";
-          ctx.fillStyle = color;
-          ctx.fillText(link.type, 0, -3); 
-          ctx.restore();
-
-          // 2. Draw a VERY SMALL, SHARP arrow head at the TARGET node boundary (radius=6)
-          if (linkLen > 6) {
-            const nodeRadius = 6;
-            const arrowLen = 3;
-            const arrowWidth = 2.5; 
+          // 1. Draw a VERY SMALL, SHARP arrow head at the TARGET node boundary (radius=6.5)
+          const nodeRadius = 6.5;
+          const arrowLen = Math.max(2.0, 4.5 / Math.sqrt(globalScale));
+          const arrowWidth = Math.max(1.5, 3.2 / Math.sqrt(globalScale)); 
+          
+          if (linkLen > nodeRadius + arrowLen) {
             const tipPos = {
               x: end.x - (relLink.x / linkLen) * nodeRadius,
               y: end.y - (relLink.y / linkLen) * nodeRadius
@@ -667,12 +638,74 @@ const GraphViewer = ({
             ctx.translate(tipPos.x, tipPos.y);
             ctx.rotate(Math.atan2(relLink.y, relLink.x));
             ctx.beginPath();
-            ctx.moveTo(0, 0); // tip
+            ctx.moveTo(0, 0); // Tip exactly touching node boundary
             ctx.lineTo(-arrowLen, -arrowWidth);
             ctx.lineTo(-arrowLen, arrowWidth);
             ctx.closePath();
             ctx.fillStyle = color;
             ctx.fill();
+            
+            // Thin high-contrast outline on arrow
+            ctx.strokeStyle = theme === "light" ? "rgba(255,255,255,0.8)" : "rgba(0,0,0,0.8)";
+            ctx.lineWidth = 0.5 / globalScale;
+            ctx.stroke();
+            ctx.restore();
+          }
+
+          // 2. Draw relationship text inside a crisp background pill capsule (only at moderate zoom levels or when highlighted)
+          if (globalScale > 0.85 || isHighlighted) {
+            const textPos = {
+              x: start.x + relLink.x * 0.5,
+              y: start.y + relLink.y * 0.5
+            };
+
+            let textAngle = Math.atan2(relLink.y, relLink.x);
+            if (textAngle > Math.PI / 2) textAngle = -(Math.PI - textAngle);
+            if (textAngle < -Math.PI / 2) textAngle = -(-Math.PI - textAngle);
+
+            const fontSize = Math.max(3.2, 7.5 / Math.sqrt(globalScale));
+            ctx.save();
+            ctx.translate(textPos.x, textPos.y);
+            ctx.rotate(textAngle);
+            
+            ctx.font = `${isHighlighted ? "bold " : ""}${fontSize}px Inter, sans-serif`;
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+
+            const textWidth = ctx.measureText(link.type).width;
+            const padX = 2.5 / globalScale;
+            const padY = 1.2 / globalScale;
+
+            // Draw pill background
+            ctx.beginPath();
+            const px = -textWidth / 2 - padX;
+            const py = -fontSize / 2 - padY;
+            const pw = textWidth + padX * 2;
+            const ph = fontSize + padY * 2;
+            const r = ph / 2;
+
+            if (ctx.roundRect) {
+              ctx.roundRect(px, py, pw, ph, r);
+            } else {
+              ctx.rect(px, py, pw, ph);
+            }
+            
+            // Fill background capsule
+            ctx.fillStyle = theme === "light" 
+              ? "rgba(255, 255, 255, 0.95)" 
+              : "rgba(11, 15, 25, 0.95)";
+            ctx.fill();
+
+            // Capsule border
+            ctx.strokeStyle = isHighlighted 
+              ? color 
+              : (theme === "light" ? "rgba(15, 23, 42, 0.15)" : "rgba(255, 255, 255, 0.15)");
+            ctx.lineWidth = (isHighlighted ? 1.0 : 0.5) / globalScale;
+            ctx.stroke();
+
+            // Text
+            ctx.fillStyle = color;
+            ctx.fillText(link.type, 0, 0);
             ctx.restore();
           }
         }}

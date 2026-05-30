@@ -15,7 +15,7 @@ def serialize_properties(props: dict) -> dict:
 
 def get_edge_types_data(namespace: str = "Test"):
     driver = get_db_driver()
-    query = f"MATCH (:`{namespace}`)-[r]-(:`{namespace}`) RETURN DISTINCT type(r) as type"
+    query = "CALL db.relationshipTypes() YIELD relationshipType RETURN relationshipType as type"
     with driver.session() as session:
         result = session.run(query)
         return [record["type"] for record in result]
@@ -39,27 +39,27 @@ def get_graph_data(limit: int, node_types: Optional[List[str]] = None, edge_type
     
     if not target_labels and not target_edge_types:
         return {"nodes": [], "links": []}
-
-    # 3. Calculate quotas for each category to ensure even distribution
+        
     num_node_slots = len(target_labels)
     num_edge_slots = len(target_edge_types)
     total_slots = num_node_slots + num_edge_slots
-    
     quota = max(1, int(limit / (num_node_slots + 1.2 * num_edge_slots))) if total_slots > 0 else limit
 
     nodes = {}
     links = []
-
-    is_filtered = bool(node_types and "All" not in node_types)
-
+    
     with driver.session() as session:
-        # Step A & B: Combined Sampling
+        # A. UNIFIED BATCHED NODE SAMPLING (Single Round-Trip)
         if num_node_slots > 0:
+            subqueries = []
             for label in target_labels:
                 lbl_clause = f":`{label}`" if label != "All" else ""
-                ns_clause = f":`{namespace}`" if namespace and namespace != "All" else ""
-                query = f"MATCH (n{lbl_clause}{ns_clause}) RETURN n LIMIT $quota"
-                result = session.run(query, quota=quota)
+                # Fast single-label index scan
+                subqueries.append(f"MATCH (n{lbl_clause}) RETURN n LIMIT {quota}")
+            
+            unified_query = "\nUNION\n".join(subqueries)
+            if unified_query:
+                result = session.run(unified_query)
                 for record in result:
                     n = record["n"]
                     if n:
@@ -67,44 +67,46 @@ def get_graph_data(limit: int, node_types: Optional[List[str]] = None, edge_type
                         if eid not in nodes:
                             nodes[eid] = {"id": eid, "labels": list(n.labels), "properties": serialize_properties(dict(n))}
 
-        for etype in target_edge_types:
-            where_clause = f"WHERE n:`{namespace}` AND m:`{namespace}`"
-            if is_filtered:
-                where_clause += " AND any(l IN labels(n) WHERE l IN $target_labels) AND any(l IN labels(m) WHERE l IN $target_labels)"
+        # B. UNIFIED BATCHED EDGE SAMPLING (Single Round-Trip)
+        if num_edge_slots > 0:
+            subqueries = []
+            is_filtered = bool(node_types and "All" not in node_types)
+            target_labels_set = set(target_labels)
             
-            query = f"""
-            MATCH (n)-[r:`{etype}`]-(m)
-            {where_clause}
-            RETURN n, r, m
-            LIMIT $limit
-            """
-            result = session.run(query, limit=quota * 2 if edge_types else quota, target_labels=target_labels)
-            for record in result:
-                for key in ["n", "m"]:
-                    node = record[key]
-                    if node:
-                        if is_filtered:
-                            node_labels = set(node.labels)
-                            if not any(l in node_labels for l in target_labels):
-                                continue
-
-                        eid = node.element_id if hasattr(node, "element_id") else str(getattr(node, "id", node))
-                        if eid not in nodes:
-                            nodes[eid] = {"id": eid, "labels": list(node.labels), "properties": serialize_properties(dict(node))}
-                
-                r = record["r"]
-                if r:
-                    start_node = r.start_node if hasattr(r, "start_node") else r.nodes[0]
-                    end_node = r.end_node if hasattr(r, "end_node") else r.nodes[1]
-                    s_id = start_node.element_id if hasattr(start_node, "element_id") else str(getattr(start_node, "id", start_node))
-                    e_id = end_node.element_id if hasattr(end_node, "element_id") else str(getattr(end_node, "id", end_node))
+            for etype in target_edge_types:
+                # Directed fast index matching without slow double label checks
+                subqueries.append(f"MATCH (n)-[r:`{etype}`]->(m) RETURN n, r, m LIMIT {quota * 2 if edge_types else quota}")
+            
+            unified_query = "\nUNION\n".join(subqueries)
+            if unified_query:
+                result = session.run(unified_query)
+                for record in result:
+                    n_node = record["n"]
+                    m_node = record["m"]
+                    r_rel = record["r"]
                     
-                    if s_id in nodes and e_id in nodes:
-                        link = {"source": s_id, "target": e_id, "type": r.type, "properties": serialize_properties(dict(r))}
-                        if link not in links:
-                            links.append(link)
+                    # Store nodes
+                    for node in (n_node, m_node):
+                        if node:
+                            if is_filtered and not any(l in node.labels for l in target_labels_set):
+                                continue
+                            eid = node.element_id if hasattr(node, "element_id") else str(getattr(node, "id", node))
+                            if eid not in nodes:
+                                nodes[eid] = {"id": eid, "labels": list(node.labels), "properties": serialize_properties(dict(node))}
+                    
+                    # Store relationship
+                    if r_rel:
+                        start_node = r_rel.start_node if hasattr(r_rel, "start_node") else r_rel.nodes[0]
+                        end_node = r_rel.end_node if hasattr(r_rel, "end_node") else r_rel.nodes[1]
+                        s_id = start_node.element_id if hasattr(start_node, "element_id") else str(getattr(start_node, "id", start_node))
+                        e_id = end_node.element_id if hasattr(end_node, "element_id") else str(getattr(end_node, "id", end_node))
+                        
+                        if s_id in nodes and e_id in nodes:
+                            link = {"source": s_id, "target": e_id, "type": r_rel.type, "properties": serialize_properties(dict(r_rel))}
+                            if link not in links:
+                                links.append(link)
 
-        # Step C: Enrichment
+        # C. ENRICHMENT SCAN (Interconnecting Sampled Entities)
         if nodes:
             node_ids = list(nodes.keys())
             query = f"""
@@ -125,6 +127,7 @@ def get_graph_data(limit: int, node_types: Optional[List[str]] = None, edge_type
                 if link not in links:
                     links.append(link)
 
+    # Trim to strict client limits
     if len(nodes) > limit:
         node_ids_list = list(nodes.keys())[:limit]
         final_nodes = [nodes[eid] for eid in node_ids_list]

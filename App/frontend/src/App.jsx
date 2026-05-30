@@ -2,8 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from "react";
 import GraphViewer from "./components/GraphViewer";
 import axios from "axios";
 import {
-  Info,
-  Database,
+  Dna,
   ChevronDown,
   ChevronRight,
   Sun,
@@ -15,6 +14,7 @@ import "./index.css";
 const HierarchyItem = ({ item, onTypeClick, depth = 0 }) => {
   const [isOpen, setIsOpen] = useState(depth < 2); // Auto-expand top levels
 
+  if (item.name === "Test") return null;
   if (item.count === 0 && !item.children) return null;
 
   return (
@@ -55,7 +55,6 @@ const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || "http://localhost:8000/api";
 
 function App() {
-  const [activeTab, setActiveTab] = useState("graph");
   const [showStats, setShowStats] = useState(false);
   const [dbStats, setDbStats] = useState({
     total_nodes: 0,
@@ -88,7 +87,6 @@ function App() {
 
     // Prioritize structural labels to ensure they stay at the top of the hierarchy
     const PRIORITY_LABELS = [
-      "Test",
       "External",
       "MIMIC",
       "Admission",
@@ -111,21 +109,25 @@ function App() {
     const labelCounts = {};
     dbStats.node_breakdown.forEach((entry) => {
       entry.labels?.forEach((label) => {
-        labelCounts[label] = (labelCounts[label] || 0) + entry.count;
+        if (label !== "Test") {
+          labelCounts[label] = (labelCounts[label] || 0) + entry.count;
+        }
       });
     });
 
     // 2. For each entry, sort its labels by priority and then frequency
     const sortedEntries = dbStats.node_breakdown.map((entry) => ({
       ...entry,
-      sortedLabels: [...(entry.labels || [])].sort((a, b) => {
-        const aIdx = PRIORITY_LABELS.indexOf(a);
-        const bIdx = PRIORITY_LABELS.indexOf(b);
-        if (aIdx !== -1 && bIdx !== -1) return aIdx - bIdx;
-        if (aIdx !== -1) return -1;
-        if (bIdx !== -1) return 1;
-        return labelCounts[b] - labelCounts[a];
-      }),
+      sortedLabels: [...(entry.labels || [])]
+        .filter((label) => label !== "Test")
+        .sort((a, b) => {
+          const aIdx = PRIORITY_LABELS.indexOf(a);
+          const bIdx = PRIORITY_LABELS.indexOf(b);
+          if (aIdx !== -1 && bIdx !== -1) return aIdx - bIdx;
+          if (aIdx !== -1) return -1;
+          if (bIdx !== -1) return 1;
+          return labelCounts[b] - labelCounts[a];
+        }),
     }));
 
     // 3. Build a Trie structure with accumulated counts
@@ -183,7 +185,6 @@ function App() {
 
   const handleTypeClick = (type, category = "node") => {
     setExternalFilter({ type, category });
-    setActiveTab("graph");
     setShowStats(false);
   };
 
@@ -194,27 +195,15 @@ function App() {
           <div className="logo">
             <h1>Patient EHR Explorer</h1>
           </div>
+        </div>
+
+        <div className="header-actions">
           <button
             className={`stats-toggle-btn ${showStats ? "active" : ""}`}
             onClick={() => setShowStats(!showStats)}
             title="Database Statistics"
           >
-            <Database size={18} />
-          </button>
-        </div>
-
-        <nav className="tabs">
-          <button
-            className={`custom-button ${activeTab === "graph" ? "active" : ""}`}
-            onClick={() => setActiveTab("graph")}
-          >
-            Graph Visualization
-          </button>
-          <button
-            className={`custom-button ${activeTab === "data" ? "active" : ""}`}
-            onClick={() => setActiveTab("data")}
-          >
-            Settings
+            <Dna size={18} />
           </button>
 
           <button
@@ -226,7 +215,7 @@ function App() {
           >
             {theme === "light" ? <Moon size={18} /> : <Sun size={18} />}
           </button>
-        </nav>
+        </div>
       </header>
 
       {showStats && (
@@ -262,7 +251,6 @@ function App() {
                   <HierarchyItem
                     key={group.name}
                     item={group}
-                    nodeBreakdown={dbStats.node_breakdown}
                     onTypeClick={(type) => handleTypeClick(type, "node")}
                   />
                 ))}
@@ -290,18 +278,11 @@ function App() {
       )}
 
       <main className="app-content">
-        {activeTab === "graph" ? (
-          <GraphViewer
-            externalFilter={externalFilter}
-            onFilterUsed={clearExternalFilter}
-            theme={theme}
-          />
-        ) : (
-          <div className="coming-soon glass-panel">
-            <h2>Settings View</h2>
-            <p>Configure advanced connection settings here.</p>
-          </div>
-        )}
+        <GraphViewer
+          externalFilter={externalFilter}
+          onFilterUsed={clearExternalFilter}
+          theme={theme}
+        />
       </main>
     </div>
   );
