@@ -47,9 +47,7 @@ Below is the layout of the codebase, outlining the logical separation of core pr
 │   │   ├── graph_snapshot.py     # Database orchestrator dumping schema/snapshots
 │   │   └── post_check.cypher     # Cypher validation queries ensuring graph integrity
 │   │
-│   ├── models/                   # GNN-Based Entity Representation Models
-│   │   ├── preparation/          # PyTorch Geometric dataset loaders and preparation scripts
-│   │
+│   ├── models/                   # Note Extraction models and training scripts
 │   ├── downstream/               # Multi-Task Patient Sequence Modeling (RNN/Transformer)
 │   │   ├── presetup/             # Patient cohort definition, demographic and diagnosis filters
 │   │   ├── clustering_ablation/  # Embedding clustering validations and ablation checks
