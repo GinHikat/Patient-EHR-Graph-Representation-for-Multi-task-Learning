@@ -4,7 +4,7 @@ A state-of-the-art research pipeline and platform that constructs a structured *
 
 ---
 
-## 🌟 Core Architecture Overview
+## Core Architecture Overview
 
 The system operates across three interconnected layers designed to bridge raw medical databases with advanced neural representations:
 
@@ -23,21 +23,21 @@ graph TD
 
 ---
 
-## 📁 Repository Map
+## Repository Structure
 
 Below is the layout of the codebase, outlining the logical separation of core processing pipelines, local data caches, model definitions, and the full-stack visualization web app.
 
 ```
 .
-├── App/                          # Full-Stack Web Application
-│   ├── backend/                  # FastAPI REST API Backend
+├── App/                          
+│   ├── backend/                  # FastAPI Backend
 │   └── frontend/                 # React + Vite Frontend
 │
 ├── data/                         # Local Data Storage & Artifacts (Ignored / Cached)
 │
-├── modules/                      # Core Pipeline, Preprocessing, and Machine Learning Modules
-│   ├── dataset_preprocessing/    # Preprocessing Pipelines (Cleaning & Standardization)
-│   │   ├── external/             # Mappings for external medical ontologies (OMOP, RXNORM)
+├── modules/                      
+│   ├── dataset_preprocessing/    # Preprocessing Pipelines
+│   │   ├── external/             # Mappings for external medical ontologies 
 │   │   ├── mimic/                # Cleaning, filtering, and standardizing MIMIC-IV raw tables
 │   │   └── utils.py              # Text cleaning and preprocessing helper utilities
 │   │
@@ -49,38 +49,21 @@ Below is the layout of the codebase, outlining the logical separation of core pr
 │   │
 │   ├── models/                   # GNN-Based Entity Representation Models
 │   │   ├── preparation/          # PyTorch Geometric dataset loaders and preparation scripts
-│   │   ├── models.py             # Neural network definitions (GAT-based AdmissionEncoder)
-│   │   ├── extractor.py          # Neo4j sub-graph extraction and feature parsing utility
-│   │   ├── diagnosis_training.py # GNN trainer optimizing diagnosis embeddings
-│   │   ├── procedure_training.py # GNN trainer optimizing clinical procedure embeddings
-│   │   ├── diagnosis_testing.py  # Model evaluation code for diagnosis embeddings
-│   │   └── test_full.py          # E2E validation script for the GNN framework
 │   │
 │   ├── downstream/               # Multi-Task Patient Sequence Modeling (RNN/Transformer)
 │   │   ├── presetup/             # Patient cohort definition, demographic and diagnosis filters
 │   │   ├── clustering_ablation/  # Embedding clustering validations and ablation checks
 │   │   ├── temporal_sequence_setup/ # Aligning temporal admission events into timeline sequences
-│   │   └── training/             # Multi-task outcome models (Mortality, LOS, Readmission)
-│   │
+│   │   └── training/             # Multi-task outcome models 
 │   └── test/                     # Debugging & Verification Scripts
-│       ├── audit_nans.py         # Check loaded timelines for NaNs/null values
-│       ├── check_outnotes_kg.py  # Check note-extracted nodes in external KG
-│       ├── event_length.py       # Analyze sequence length distributions
-│       └── test_timeline.py      # Chronological and shape validation checks
-│
-├── notebooks/                    # Jupyter Experimentation Playgrounds
-├── plan/                         # Architecture Blueprints & Implementation Roadmaps
-├── secrets/                      # Local API Keys, service credentials (never committed)
 ├── shared_functions/             # Global Helper Functions & Third-Party APIs
-│
-├── .env.example                  # Environment template variable list
-├── .gitignore                    # Git file exclusion rules
-└── requirements.txt              # Core Python dependencies
+├── .env.example            
+└── requirements.txt         
 ```
 
 ---
 
-## 🛠️ Getting Started
+## Getting Started
 
 ### 1. Clone the Repository
 
@@ -139,50 +122,7 @@ pip install -r requirements.txt
 
 ---
 
-## 🚀 Running the Pipeline
-
-### Step A: Dataset Preprocessing & Graph Construction
-
-Ingest and clean raw MIMIC data, map external ontologies, and ingest entities/relations into Neo4j:
-
-```bash
-# Ingest nodes and enrich linkages in Neo4j
-python modules/graph_construction/graph_snapshot.py
-```
-
-### Step B: Train the GNN Graph Representation Models
-
-Run the Graph Attention Network (GAT) models to generate dense embeddings for medical entities:
-
-```bash
-# Train diagnosis embeddings
-python modules/models/diagnosis_training.py
-
-# Train procedure embeddings
-python modules/models/procedure_training.py
-```
-
-### Step C: Compile Patient Timelines
-
-Construct unified multi-modal timeline sequence tensors:
-
-```bash
-# Setup patient timelines
-python modules/downstream/temporal_sequence_setup/temporal_modeling.py
-```
-
-### Step D: Downstream Multi-Task Training
-
-Train deep learning networks (RNN/Transformer) to predict mortality, readmission, and ICU length of stay:
-
-```bash
-# Train multi-task EHR models
-python modules/downstream/training/EHR_training.py
-```
-
----
-
-## 📊 Quantitative Results & Benchmarks
+## Quantitative Results & Benchmarks
 
 The proposed patient representation framework is evaluated across **four per-admission tasks** using the MIMIC-IV dataset and compared against **nine recent state-of-the-art (SOTA) clinical machine learning methods** from 2022 to 2025:
 
@@ -204,7 +144,7 @@ The proposed patient representation framework is evaluated across **four per-adm
 
 ---
 
-## 🖥️ Running the Visualization Web Application
+## Running the Visualization Web Application
 
 ### 1. Launch the FastAPI Backend
 
@@ -227,33 +167,7 @@ npm run dev
 * The frontend development server will launch at `http://localhost:5173`.
 * You can also access the cloud-deployed application directly: `https://patient-ehr-graph.vercel.app`. *(Note: Hosted on free-tier Render/Vercel services; cold start times may apply.)*
 
----
-
-## 🧪 Verification & Testing
-
-Verify that your local dataset is completely aligned, containing no NaN/Null tensors, and has healthy sequence distributions:
-
-```bash
-# Check loaded timelines for NaNs/null values
-python modules/test/audit_nans.py
-
-# Verify chronological alignment and formatting of timelines
-python modules/test/test_timeline.py
-
-# Analyze sequence length distributions across cohorts
-python modules/test/event_length.py
-```
-
-To run the API and backend integration tests:
-
-```bash
-cd App/backend
-python -m pytest test
-```
-
----
-
-## 📊 Prerequisites & Versions
+## Prerequisites & Versions
 
 | Component            | Version / Requirement                                                  |
 | :------------------- | :--------------------------------------------------------------------- |
