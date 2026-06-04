@@ -11,10 +11,10 @@
   --text-muted: #8292aa;
   
   /* Glowing Bioluminescent Colorway */
-  --accent-color: #00f2fe;     /* Neon Cyan */
+  --accent-color: #00d8f6;     /* Neon Cyan (softer for readability) */
   --accent-hover: #38bdf8;     /* Sky Cyan */
   --accent-purple: #a154ff;    /* Cyber Purple */
-  --accent-teal: #00f5d4;      /* Bio Green/Teal */
+  --accent-teal: #00e5c9;      /* Softer Bio Green/Teal */
   --accent-rose: #ff2a5f;      /* Clinical Warning Red */
   --accent-amber: #ffb000;     /* Medication Amber */
   --danger-color: #ff2a5f;
@@ -581,6 +581,59 @@ body::before {
   box-shadow: 0 6px 20px rgba(0, 242, 254, 0.4);
 }
 
+/* Custom Sci-Fi Outline Buttons */
+.btn-outline-cyan {
+  background: rgba(0, 242, 254, 0.05);
+  border: 1px solid rgba(0, 242, 254, 0.25);
+  color: var(--accent-color);
+  padding: 10px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 0.8rem;
+  transition: all 0.25s ease;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.btn-outline-cyan:hover {
+  background: rgba(0, 242, 254, 0.15);
+  border-color: rgba(0, 242, 254, 0.5);
+  color: #ffffff;
+  box-shadow: 0 0 15px rgba(0, 242, 254, 0.3);
+}
+
+.btn-outline-rose {
+  background: rgba(255, 42, 95, 0.05);
+  border: 1px solid rgba(255, 42, 95, 0.25);
+  color: var(--accent-rose);
+  padding: 10px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 0.8rem;
+  transition: all 0.25s ease;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.btn-outline-rose:hover {
+  background: rgba(255, 42, 95, 0.15);
+  border-color: rgba(255, 42, 95, 0.5);
+  color: #ffffff;
+  box-shadow: 0 0 15px rgba(255, 42, 95, 0.3);
+}
+
 .filter-type-group {
   flex: 1;
   display: flex;
@@ -944,7 +997,9 @@ body::before {
 .legend::-webkit-scrollbar,
 .database-stats-pane::-webkit-scrollbar,
 .stats-breakdown::-webkit-scrollbar,
-.settings-console::-webkit-scrollbar {
+.settings-console::-webkit-scrollbar,
+.entity-card-form::-webkit-scrollbar,
+.vocab-grid::-webkit-scrollbar {
   width: 6px;
 }
 
@@ -953,7 +1008,9 @@ body::before {
 .legend::-webkit-scrollbar-thumb,
 .database-stats-pane::-webkit-scrollbar-thumb,
 .stats-breakdown::-webkit-scrollbar-thumb,
-.settings-console::-webkit-scrollbar-thumb {
+.settings-console::-webkit-scrollbar-thumb,
+.entity-card-form::-webkit-scrollbar-thumb,
+.vocab-grid::-webkit-scrollbar-thumb {
   background: rgba(0, 242, 254, 0.15);
   border-radius: 10px;
 }
@@ -1007,3 +1064,719 @@ body::before {
     transform: rotate(360deg);
   }
 }
+
+/* Clinical NLP Sandbox Styles */
+.nlp-sandbox-layout {
+  display: flex;
+  gap: 20px;
+  height: 100%;
+  width: 100%;
+  padding: 100px 24px 24px 24px; /* Top padding clears the floating header */
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.nlp-column {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  padding: 20px;
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--panel-border-pulse);
+  padding-bottom: 10px;
+}
+
+.panel-header h2 {
+  font-family: var(--font-display);
+  font-size: 1rem;
+  font-weight: 700;
+  margin: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+
+.panel-icon {
+  width: 20px;
+  height: 20px;
+}
+
+.text-cyan { color: var(--accent-color); }
+.text-purple { color: var(--accent-purple); }
+.text-rose { color: var(--accent-rose); }
+.text-teal { color: var(--accent-teal); }
+
+.sample-notes-bar {
+  margin-bottom: 14px;
+}
+
+.section-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  display: block;
+  margin-bottom: 6px;
+}
+
+.sample-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.sample-btn {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--panel-border);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.sample-btn:hover {
+  background: rgba(0, 242, 254, 0.05);
+  color: var(--text-main);
+  border-color: var(--accent-color);
+}
+
+.nlp-input-wrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  margin-bottom: 16px;
+}
+
+.nlp-textarea {
+  flex: 1;
+  width: 100%;
+  resize: none;
+  background: rgba(0, 0, 0, 0.45);
+  line-height: 1.6;
+  font-size: 0.88rem;
+  padding: 14px;
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  color: var(--text-main);
+  overflow-y: auto;
+  font-family: var(--font-body);
+}
+
+.nlp-settings-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+}
+
+.setting-control {
+  flex: 1;
+}
+
+.run-nlp-btn {
+  height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 20px;
+  min-width: 130px;
+}
+
+.nlp-reader-box {
+  flex: 1;
+  background: rgba(6, 11, 28, 0.7);
+  border: 1px solid rgba(0, 216, 246, 0.18);
+  border-left: 4px solid var(--accent-color);
+  border-radius: 4px 16px 16px 4px;
+  padding: 20px;
+  overflow-y: auto;
+  font-size: 0.95rem;
+  line-height: 1.8;
+  letter-spacing: 0.2px;
+  color: var(--text-main);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5), inset 0 0 20px rgba(0, 216, 246, 0.04);
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.nlp-reader-box:hover {
+  border-color: rgba(0, 216, 246, 0.4);
+  border-left-color: var(--accent-hover);
+  box-shadow: 0 10px 45px rgba(0, 0, 0, 0.6), inset 0 0 25px rgba(0, 216, 246, 0.08);
+}
+
+.subgraph-frame {
+  width: 100%;
+  background: rgba(6, 11, 28, 0.7);
+  border: 1px solid rgba(0, 216, 246, 0.18);
+  border-left: 4px solid var(--accent-color);
+  border-radius: 4px 16px 16px 4px;
+  overflow: hidden;
+  position: relative;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5), inset 0 0 20px rgba(0, 216, 246, 0.04);
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.subgraph-frame:hover {
+  border-color: rgba(0, 216, 246, 0.4);
+  border-left-color: var(--accent-hover);
+  box-shadow: 0 10px 45px rgba(0, 0, 0, 0.6), inset 0 0 25px rgba(0, 216, 246, 0.08);
+}
+
+/* Tab Buttons in Middle Panel */
+.middle-panel-tabs {
+  display: flex;
+  gap: 12px;
+  border-bottom: 1px solid var(--panel-border-pulse);
+  margin-bottom: 16px;
+  padding-bottom: 4px;
+}
+
+.tab-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-family: var(--font-display);
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 8px 16px;
+  cursor: pointer;
+  position: relative;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 6px 6px 0 0;
+  border-bottom: 2px solid transparent;
+}
+
+.tab-btn:hover {
+  color: var(--text-main);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.tab-btn.active {
+  color: var(--accent-color);
+  background: rgba(0, 216, 246, 0.05);
+  border-bottom: 2px solid var(--accent-color);
+  text-shadow: 0 0 10px rgba(0, 216, 246, 0.2);
+}
+
+.tab-btn.active::after {
+  content: "";
+  position: absolute;
+  bottom: -2px;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  background: var(--accent-color);
+  box-shadow: 0 0 8px var(--accent-color);
+}
+
+.placeholder-text {
+  color: var(--text-muted);
+  font-style: italic;
+  text-align: center;
+  margin-top: 40px;
+}
+
+.nlp-highlighted-content {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Entity Highlighting Spans */
+.nlp-entity-mark {
+  position: relative;
+  cursor: pointer;
+  padding: 2px 6px;
+  margin: 0 2px;
+  border-radius: 4px;
+  font-weight: 600;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  border-bottom: 2px solid transparent;
+}
+
+.entity-badge-sup {
+  font-size: 0.6rem;
+  font-weight: 800;
+  vertical-align: super;
+  margin-left: 3px;
+  opacity: 0.8;
+}
+
+/* Color codes */
+.nlp-span-disease {
+  background: rgba(255, 42, 95, 0.15) !important;
+  color: #ff2a5f !important;
+  border-bottom: 2px solid #ff2a5f !important;
+}
+.nlp-span-disease:hover, .nlp-span-disease.selected {
+  background: rgba(255, 42, 95, 0.25) !important;
+  box-shadow: 0 0 10px rgba(255, 42, 95, 0.3);
+}
+
+.nlp-span-drug {
+  background: rgba(0, 245, 254, 0.12) !important;
+  color: #00f2fe !important;
+  border-bottom: 2px solid #00f2fe !important;
+}
+.nlp-span-drug:hover, .nlp-span-drug.selected {
+  background: rgba(0, 245, 254, 0.22) !important;
+  box-shadow: 0 0 10px rgba(0, 242, 254, 0.3);
+}
+
+.nlp-span-procedure {
+  background: rgba(255, 176, 0, 0.12) !important;
+  color: #ffb000 !important;
+  border-bottom: 2px solid #ffb000 !important;
+}
+.nlp-span-procedure:hover, .nlp-span-procedure.selected {
+  background: rgba(255, 176, 0, 0.22) !important;
+  box-shadow: 0 0 10px rgba(255, 176, 0, 0.3);
+}
+
+.nlp-span-lab {
+  background: rgba(161, 84, 255, 0.12) !important;
+  color: #a154ff !important;
+  border-bottom: 2px solid #a154ff !important;
+}
+.nlp-span-lab:hover, .nlp-span-lab.selected {
+  background: rgba(161, 84, 255, 0.22) !important;
+  box-shadow: 0 0 10px rgba(161, 84, 255, 0.3);
+}
+
+.nlp-span-other {
+  background: rgba(130, 146, 170, 0.12) !important;
+  color: var(--text-muted) !important;
+  border-bottom: 2px solid var(--text-muted) !important;
+}
+
+.nlp-quick-metrics {
+  display: flex;
+  gap: 16px;
+  margin-top: 14px;
+  background: rgba(255, 255, 255, 0.02);
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid var(--panel-border-pulse);
+}
+
+.quick-metric {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.metric-val {
+  font-family: var(--font-mono);
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--accent-teal);
+}
+
+/* Concept Ontology Mapper Styles */
+.entity-details-view {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+
+.no-selection-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 30px;
+  color: var(--text-muted);
+  border: 1px dashed var(--panel-border-pulse);
+  border-radius: 10px;
+  flex: 1;
+  display: flex;
+}
+
+.pulse-icon {
+  margin-bottom: 12px;
+  animation: pulse 2s infinite;
+}
+
+.entity-card {
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  padding: 18px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.entity-card-header-hud {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding-bottom: 10px;
+  margin-bottom: 18px;
+}
+
+.entity-card-title {
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.entity-card-subtitle {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.entity-card-form {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  flex: 1;
+  overflow-y: auto;
+  padding-right: 6px;
+  margin-bottom: 8px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 242, 254, 0.15) transparent;
+}
+
+.setting-control {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Vocab Mappings Grid using native CSS Grid */
+.vocab-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px 20px;
+  max-height: 250px;
+  overflow-y: auto;
+  padding-right: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 242, 254, 0.15) transparent;
+}
+
+.vocab-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.entity-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.entity-category-pill {
+  font-size: 0.65rem;
+  font-weight: 800;
+  padding: 3px 10px;
+  border-radius: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.category-disease { background: rgba(255, 42, 95, 0.2); color: #ff2a5f; border: 1px solid #ff2a5f; }
+.category-drug { background: rgba(0, 245, 254, 0.2); color: #00f2fe; border: 1px solid #00f2fe; }
+.category-procedure { background: rgba(255, 176, 0, 0.2); color: #ffb000; border: 1px solid #ffb000; }
+.category-lab { background: rgba(161, 84, 255, 0.2); color: #a154ff; border: 1px solid #a154ff; }
+
+.entity-confidence {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+.entity-card h3 {
+  font-family: var(--font-display);
+  font-size: 1.1rem;
+  font-weight: 700;
+  margin: 0 0 6px 0;
+  color: var(--text-main);
+}
+
+.matched-text-sub {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-bottom: 14px;
+}
+
+.ontology-codes-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.code-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 6px;
+  border: 1px solid var(--panel-border-pulse);
+}
+
+.code-vocab {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.code-val {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--accent-teal);
+}
+
+.no-codes-warning {
+  display: flex;
+  align-items: center;
+  font-size: 0.75rem;
+  color: var(--accent-amber);
+  margin-top: 4px;
+}
+
+.nlp-sync-controls {
+  border-top: 1px solid var(--panel-border-pulse);
+  padding-top: 16px;
+}
+
+.nlp-sync-controls h3 {
+  font-family: var(--font-display);
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--text-main);
+  margin: 0 0 4px 0;
+}
+
+.explanation-text {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+}
+
+.inject-inputs-row {
+  display: flex;
+  gap: 12px;
+}
+
+.inject-input-group {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.inject-input-group label {
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.inject-input-group input {
+  padding: 8px 12px;
+  font-size: 0.8rem;
+}
+
+.sync-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 40px;
+}
+
+.inject-status-alert {
+  display: flex;
+  align-items: flex-start;
+  padding: 12px;
+  border-radius: 8px;
+  margin-top: 12px;
+  font-size: 0.8rem;
+}
+
+.status-success {
+  background: rgba(16, 185, 129, 0.1);
+  border: 1px solid rgba(16, 185, 129, 0.2);
+}
+
+.status-error {
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+.status-title {
+  font-weight: 700;
+  margin: 0;
+  color: var(--text-main);
+}
+
+.status-detail {
+  margin: 2px 0 0 0;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+}
+
+/* Animations */
+@keyframes pulse {
+  0% { transform: scale(1); opacity: 0.8; }
+  50% { transform: scale(1.05); opacity: 1; }
+  100% { transform: scale(1); opacity: 0.8; }
+}
+
+.mr-1 { margin-right: 4px; }
+.mr-2 { margin-right: 8px; }
+.mt-3 { margin-top: 12px; }
+.pt-3 { padding-top: 12px; }
+.border-top { border-top: 1px solid var(--panel-border-pulse); }
+
+/* Responsive adjustments */
+@media (max-width: 1024px) {
+  .nlp-sandbox-layout {
+    flex-direction: column;
+    overflow-y: auto;
+  }
+  .nlp-column {
+    height: auto;
+    min-height: 400px;
+  }
+}
+
+/* Custom Clinical NLP Categories & Interactive Tokens */
+.nlp-token {
+  display: inline-block;
+  padding: 1px 3px;
+  margin: 0px 1px;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: pre-wrap;
+}
+
+.nlp-token.word:hover {
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 0 4px rgba(255, 255, 255, 0.1);
+}
+
+.nlp-token.entity {
+  font-weight: 500;
+  border-bottom: 2px solid transparent;
+}
+
+.nlp-span-disease {
+  background: rgba(255, 42, 95, 0.15) !important;
+  color: #ff2a5f !important;
+  border-bottom: 2px solid #ff2a5f !important;
+}
+.nlp-span-disease:hover, .nlp-span-disease.selected {
+  background: rgba(255, 42, 95, 0.25) !important;
+  box-shadow: 0 0 10px rgba(255, 42, 95, 0.3);
+}
+
+.nlp-span-diagnosis {
+  background: rgba(255, 176, 0, 0.12) !important;
+  color: #ffb000 !important;
+  border-bottom: 2px solid #ffb000 !important;
+}
+.nlp-span-diagnosis:hover, .nlp-span-diagnosis.selected {
+  background: rgba(255, 176, 0, 0.22) !important;
+  box-shadow: 0 0 10px rgba(255, 176, 0, 0.3);
+}
+
+.nlp-span-phenotype {
+  background: rgba(236, 72, 153, 0.15) !important;
+  color: #ec4899 !important;
+  border-bottom: 2px solid #ec4899 !important;
+}
+.nlp-span-phenotype:hover, .nlp-span-phenotype.selected {
+  background: rgba(236, 72, 153, 0.25) !important;
+  box-shadow: 0 0 10px rgba(236, 72, 153, 0.3);
+}
+
+.nlp-span-bodyparts {
+  background: rgba(6, 182, 212, 0.15) !important;
+  color: #06b6d4 !important;
+  border-bottom: 2px solid #06b6d4 !important;
+}
+.nlp-span-bodyparts:hover, .nlp-span-bodyparts.selected {
+  background: rgba(6, 182, 212, 0.25) !important;
+  box-shadow: 0 0 10px rgba(6, 182, 212, 0.3);
+}
+
+.nlp-span-drugs {
+  background: rgba(16, 185, 129, 0.15) !important;
+  color: #10b981 !important;
+  border-bottom: 2px solid #10b981 !important;
+}
+.nlp-span-drugs:hover, .nlp-span-drugs.selected {
+  background: rgba(16, 185, 129, 0.25) !important;
+  box-shadow: 0 0 10px rgba(16, 185, 129, 0.3);
+}
+
+.nlp-span-chemicals {
+  background: rgba(52, 211, 153, 0.12) !important;
+  color: #34d399 !important;
+  border-bottom: 2px solid #34d399 !important;
+}
+.nlp-span-chemicals:hover, .nlp-span-chemicals.selected {
+  background: rgba(52, 211, 153, 0.22) !important;
+  box-shadow: 0 0 10px rgba(52, 211, 153, 0.3);
+}
+
+.nlp-span-procedures {
+  background: rgba(168, 85, 247, 0.15) !important;
+  color: #a855f7 !important;
+  border-bottom: 2px solid #a855f7 !important;
+}
+.nlp-span-procedures:hover, .nlp-span-procedures.selected {
+  background: rgba(168, 85, 247, 0.25) !important;
+  box-shadow: 0 0 10px rgba(168, 85, 247, 0.3);
+}
+
+.nlp-span-labs {
+  background: rgba(99, 102, 241, 0.15) !important;
+  color: #6366f1 !important;
+  border-bottom: 2px solid #6366f1 !important;
+}
+.nlp-span-labs:hover, .nlp-span-labs.selected {
+  background: rgba(99, 102, 241, 0.25) !important;
+  box-shadow: 0 0 10px rgba(99, 102, 241, 0.3);
+}
+
+.nlp-span-devices {
+  background: rgba(148, 163, 184, 0.15) !important;
+  color: #94a3b8 !important;
+  border-bottom: 2px solid #94a3b8 !important;
+}
+.nlp-span-devices:hover, .nlp-span-devices.selected {
+  background: rgba(148, 163, 184, 0.25) !important;
+  box-shadow: 0 0 10px rgba(148, 163, 184, 0.3);
+}
+
+

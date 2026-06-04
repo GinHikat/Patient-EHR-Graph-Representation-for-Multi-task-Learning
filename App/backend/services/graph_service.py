@@ -140,9 +140,14 @@ def get_graph_data(limit: int, node_types: Optional[List[str]] = None, edge_type
 def get_node_by_id(node_id: str, namespace: Optional[str] = None, node_types: Optional[List[str]] = None):
     driver = get_db_driver()
     
+    # Strip "HP:" prefix if present for HPO searches
+    node_id_clean = node_id.strip()
+    if node_id_clean.upper().startswith("HP:"):
+        node_id_clean = node_id_clean[3:]
+        
     import re
-    letters = len(re.findall(r'[a-zA-Z]', node_id))
-    digits = len(re.findall(r'[0-9]', node_id))
+    letters = len(re.findall(r'[a-zA-Z]', node_id_clean))
+    digits = len(re.findall(r'[0-9]', node_id_clean))
     op = "CONTAINS" if letters > digits else "STARTS WITH"
     
     is_filtered = bool(node_types and "All" not in node_types and len(node_types) > 0)
@@ -239,7 +244,7 @@ def get_node_by_id(node_id: str, namespace: Optional[str] = None, node_types: Op
     """
     
     with driver.session() as session:
-        result = session.run(query, node_id=node_id, target_labels=target_labels, is_filtered=is_filtered)
+        result = session.run(query, node_id=node_id_clean, target_labels=target_labels, is_filtered=is_filtered)
         nodes = {}
         links = []
         
@@ -363,3 +368,131 @@ def get_database_stats_data():
                 "total_edges": 0,
                 "edge_breakdown": []
             }
+
+def is_valid_id(val) -> bool:
+    if not val:
+        return False
+    val_str = str(val).strip()
+    if val_str in ("", "[]", "['[]']", "none", "null", "NaN", "undefined"):
+        return False
+    return True
+
+def get_cui_subgraph_data(
+    cui: str,
+    namespace: str = "Test",
+    rxnorm: Optional[str] = None,
+    snomed: Optional[str] = None,
+    mesh: Optional[str] = None,
+    drugbank: Optional[str] = None,
+    omim: Optional[str] = None,
+    icd9: Optional[str] = None,
+    icd10: Optional[str] = None,
+    loinc: Optional[str] = None,
+    pubchem: Optional[str] = None,
+    pubmed: Optional[str] = None,
+    hpo: Optional[str] = None
+) -> dict:
+    """
+    Retrieves the subgraph for a given CUI or alternative database identifiers.
+    Checks priorities one-by-one; once a matching central node is found,
+    the search is skipped and only that node's 1-hop edges are retrieved.
+    """
+    driver = get_db_driver()
+    
+    # Priority list of search terms and their corresponding Neo4j property names
+    search_priorities = [
+        (cui, "cui"),
+        (drugbank, "drugbank_id"),
+        (mesh, "mesh_id"),
+        (rxnorm, "rxnorm"),
+        (rxnorm, "rxnorm_id"),
+        (snomed, "snomed_id"),
+        (omim, "omim_id"),
+        (icd9, "icd9"),
+        (icd10, "icd10"),
+        (loinc, "loinc"),
+        (pubchem, "pubchem_id"),
+        (pubmed, "pubmed_id"),
+        (hpo, "hpo_id")
+    ]
+    
+    central_node_eid = None
+    
+    with driver.session() as session:
+        # Step 1: Find the central node one-by-one by priority
+        for val, field in search_priorities:
+            if not is_valid_id(val):
+                continue
+                
+            val_clean = val.strip()
+            # Strip "HP:" prefix for HPO matching
+            if field == "hpo_id" and val_clean.upper().startswith("HP:"):
+                val_clean = val_clean[3:]
+                
+            # Handle potential numeric type matching
+            params = {"val": val_clean}
+            has_num = False
+            try:
+                val_num = float(val_clean)
+                if val_num.is_integer():
+                    val_num = int(val_num)
+                params["val_num"] = val_num
+                has_num = True
+            except ValueError:
+                pass
+                
+            find_query = f"""
+            MATCH (c:`{namespace}`)
+            WHERE (c:Disease OR c:Drug OR c:Phenotype OR c:Diagnosis OR c:Lab OR c:Procedure OR c:Patient OR c:Admission OR c:External OR c:CTD OR c:HPO OR c:DB)
+              AND (
+                c.id = $val OR c.id = [$val]
+                OR c.{field} = $val OR c.{field} = [$val]
+                {"OR c.id = $val_num OR c.id = [$val_num]" if has_num else ""}
+                {"OR c." + field + " = $val_num OR c." + field + " = [$val_num]" if has_num else ""}
+              )
+            RETURN elementId(c) as eid
+            LIMIT 1
+            """
+            res = session.run(find_query, **params)
+            record = res.single()
+            if record:
+                central_node_eid = record["eid"]
+                break  # Skip the rest once 1 is found!
+                
+        # If no node is found, return empty
+        if not central_node_eid:
+            return {"nodes": [], "links": []}
+            
+        # Step 2: Fetch only that node and its connected edges/neighbors within 1 hop
+        subgraph_query = f"""
+        MATCH (c:`{namespace}`)
+        WHERE elementId(c) = $eid
+        OPTIONAL MATCH (c)-[r]-(m)
+        RETURN c, r, m
+        LIMIT 200
+        """
+        result = session.run(subgraph_query, eid=central_node_eid)
+        nodes = {}
+        links = []
+        for record in result:
+            c = record["c"]
+            if c is not None:
+                eid = c.element_id if hasattr(c, "element_id") else str(getattr(c, "id", str(c)))
+                if eid not in nodes:
+                    nodes[eid] = {"id": eid, "labels": list(c.labels), "properties": serialize_properties(dict(c))}
+            m = record.get("m")
+            if m is not None:
+                eid_m = m.element_id if hasattr(m, "element_id") else str(getattr(m, "id", str(m)))
+                if eid_m not in nodes:
+                    nodes[eid_m] = {"id": eid_m, "labels": list(m.labels), "properties": serialize_properties(dict(m))}
+            r = record.get("r")
+            if r is not None:
+                start_node = r.start_node if hasattr(r, "start_node") else r.nodes[0]
+                end_node = r.end_node if hasattr(r, "end_node") else r.nodes[1]
+                start_id = start_node.element_id if hasattr(start_node, "element_id") else str(getattr(start_node, "id", str(start_node)))
+                end_id = end_node.element_id if hasattr(end_node, "element_id") else str(getattr(end_node, "id", str(end_node)))
+                links.append({"source": start_id, "target": end_id, "type": r.type, "properties": serialize_properties(dict(r))})
+        
+        return {"nodes": list(nodes.values()), "links": links}
+
+

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import GraphViewer from "./components/GraphViewer";
+import NlpSandbox from "./components/NlpSandbox";
 import axios from "axios";
 import {
   Dna,
@@ -55,6 +56,7 @@ const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || "http://localhost:8000/api";
 
 function App() {
+  const [activeTab, setActiveTab] = useState("explorer");
   const [showStats, setShowStats] = useState(false);
   const [dbStats, setDbStats] = useState({
     total_nodes: 0,
@@ -68,6 +70,11 @@ function App() {
 
   const clearExternalFilter = useCallback(() => {
     setExternalFilter(null);
+  }, []);
+
+  const handleInjectSuccess = useCallback((admissionId) => {
+    setExternalFilter({ type: admissionId, category: "node" });
+    setActiveTab("explorer");
   }, []);
 
   // Handle theme persistence
@@ -197,6 +204,21 @@ function App() {
           </div>
         </div>
 
+        <div className="tabs">
+          <button
+            className={`custom-button ${activeTab === "explorer" ? "active" : ""}`}
+            onClick={() => setActiveTab("explorer")}
+          >
+            EHR Graph Explorer
+          </button>
+          <button
+            className={`custom-button ${activeTab === "nlp" ? "active" : ""}`}
+            onClick={() => setActiveTab("nlp")}
+          >
+            Clinical NLP Sandbox
+          </button>
+        </div>
+
         <div className="header-actions">
           <button
             className={`stats-toggle-btn ${showStats ? "active" : ""}`}
@@ -278,11 +300,15 @@ function App() {
       )}
 
       <main className="app-content">
-        <GraphViewer
-          externalFilter={externalFilter}
-          onFilterUsed={clearExternalFilter}
-          theme={theme}
-        />
+        {activeTab === "explorer" ? (
+          <GraphViewer
+            externalFilter={externalFilter}
+            onFilterUsed={clearExternalFilter}
+            theme={theme}
+          />
+        ) : (
+          <NlpSandbox onInjectSuccess={handleInjectSuccess} />
+        )}
       </main>
     </div>
   );

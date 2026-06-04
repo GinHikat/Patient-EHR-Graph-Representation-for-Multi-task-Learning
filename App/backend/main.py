@@ -5,9 +5,15 @@ from api.routes import router as api_router
 from core.database import close_db_driver
 from contextlib import asynccontextmanager
 
+from services.ensure_indices import ensure_indices
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup logic can go here if needed
+    # Startup logic: ensure Neo4j indices are created
+    try:
+        ensure_indices()
+    except Exception as e:
+        print(f"Warning: Failed to ensure Neo4j indices on startup: {e}")
     yield
     # Shutdown logic
     close_db_driver()
