@@ -7,5 +7,5 @@ underthesea
 pandas
 numpy
 quickumls
-spacy
+spacy>=3.7.0
 scispacy
