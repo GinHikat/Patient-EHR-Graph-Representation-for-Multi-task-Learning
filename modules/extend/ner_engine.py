@@ -8,17 +8,15 @@ project_root = os.path.abspath(os.path.join(current_dir, "..", ".."))
 if project_root not in sys.path:
     sys.path.append(project_root)
 
-# Import the quickumls extractor
 try:
     from modules.dataset_preprocessing.external.uml import spacy_quickumls
 except ImportError:
-    # Try importing with direct relative path fallback
     sys.path.append(os.path.join(project_root, 'modules'))
     from dataset_preprocessing.external.uml import spacy_quickumls
 
 # Mapping table of UMLS Semantic Types to broad clinical categories
 UMLS_STY_TO_CATEGORY = {
-    # --- Disease ---
+    # Disease
     "Disease or Syndrome": "Disease",
     "Neoplastic Process": "Disease",
     "Pathologic Function": "Disease",
@@ -26,13 +24,13 @@ UMLS_STY_TO_CATEGORY = {
     "Cell or Molecular Dysfunction": "Disease",
     "Experimental Model of Disease": "Disease",
     
-    # --- Diagnosis ---
+    # Diagnosis
     "Congenital Abnormality": "Diagnosis",
     "Acquired Abnormality": "Diagnosis",
     "Anatomical Abnormality": "Diagnosis",
     "Injury or Poisoning": "Diagnosis",
 
-    # --- Phenotype ---
+    # Phenotype
     "Sign or Symptom": "Phenotype",
     "Finding": "Phenotype",
     "Clinical Attribute": "Phenotype",
@@ -43,7 +41,7 @@ UMLS_STY_TO_CATEGORY = {
     "Cell Function": "Phenotype",
     "Biologic Function": "Phenotype",
 
-    # --- Body Parts ---
+    # Body Parts
     "Anatomical Structure": "Body Parts",
     "Body Location or Region": "Body Parts",
     "Body Part, Organ, or Organ Component": "Body Parts",
@@ -56,7 +54,7 @@ UMLS_STY_TO_CATEGORY = {
     "Embryonic Structure": "Body Parts",
     "Fully Formed Anatomical Structure": "Body Parts",
 
-    # --- Drugs ---
+    # Drugs
     "Clinical Drug": "Drugs",
     "Pharmacologic Substance": "Drugs",
     "Antibiotic": "Drugs",
@@ -66,7 +64,7 @@ UMLS_STY_TO_CATEGORY = {
     "Immunologic Factor": "Drugs",
     "Organic Chemical": "Drugs",  # Mapped to Drugs to capture common drugs (e.g. metoprolol) in clinical notes
 
-    # --- Chemicals ---
+    # Chemicals
     "Chemical": "Chemicals",
     "Chemical Viewed Functionally": "Chemicals",
     "Chemical Viewed Structurally": "Chemicals",
@@ -85,7 +83,7 @@ UMLS_STY_TO_CATEGORY = {
     "Hazardous or Poisonous Substance": "Chemicals",
     "Indicator, Reagent, or Diagnostic Aid": "Chemicals",
 
-    # --- Procedures ---
+    # Procedures
     "Therapeutic or Preventive Procedure": "Procedures",
     "Diagnostic Procedure": "Procedures",
     "Health Care Activity": "Procedures",
@@ -93,11 +91,11 @@ UMLS_STY_TO_CATEGORY = {
     "Molecular Biology Research Technique": "Procedures",
     "Educational Activity": "Procedures",
 
-    # --- Labs ---
+    # Labs
     "Laboratory Procedure": "Labs",
     "Laboratory or Test Result": "Labs",
 
-    # --- Devices ---
+    # Devices
     "Medical Device": "Devices",
     "Drug Delivery Device": "Devices",
     "Research Device": "Devices"
@@ -114,8 +112,6 @@ CLINICAL_STOPWORDS = {
     "discharge", "discharged", "summary", "report", "patient", "pt", "history of"
 }
 
-
-# Initialize Spacy blank model with sentencizer
 _nlp = None
 
 def get_nlp():
@@ -139,7 +135,7 @@ def extract_entities(text: str) -> pd.DataFrame:
     if not text or not isinstance(text, str):
         return pd.DataFrame(columns=['text', 'term', 'cui', 'similarity', 'type', 'category'])
         
-    nlp = get_nlp()
+    # nlp = get_nlp()
     if nlp:
         doc = nlp(text)
         sentences = [sent.text.strip() for sent in doc.sents if sent.text.strip()]
@@ -208,7 +204,7 @@ def get_cui_vocab_codes(cui: str) -> dict:
         print(f"Error looking up vocabulary codes for CUI {cui}: {e}")
         return {}
 
-def extract_entities_with_offsets(text: str) -> dict:
+def extract_entities_umls(text: str) -> dict:
     """
     Sentence tokenizes the input clinical text using SpaCy and runs QuickUMLS 
     concept matching. Returns a dictionary of sentences and a list of 
@@ -327,3 +323,25 @@ def extract_entities_with_offsets(text: str) -> dict:
         "entities": resolved_entities
     }
 
+def extract_entities_llm(text: str) -> dict:
+    """
+    Dummy function for Zero-Shot Medical LLM extraction.
+    Currently returns a hardcoded mock response structure.
+    """
+    return {
+        "original_text": text,
+        "sentences": [text],
+        "entities": [
+            {
+                "start": 0,
+                "end": len(text) if len(text) < 10 else 10,
+                "text": text[:10] if len(text) >= 10 else text,
+                "canonical_name": "Dummy LLM Concept",
+                "cui": "C_DUMMY",
+                "similarity": 1.0,
+                "type": "Finding",
+                "category": "Phenotype",
+                "codes": {}
+            }
+        ]
+    }

@@ -1769,6 +1769,7 @@ body::before {
   box-shadow: 0 0 10px rgba(99, 102, 241, 0.3);
 }
 
+
 .nlp-span-devices {
   background: rgba(148, 163, 184, 0.15) !important;
   color: #94a3b8 !important;
@@ -1779,4 +1780,112 @@ body::before {
   box-shadow: 0 0 10px rgba(148, 163, 184, 0.3);
 }
 
+/* Custom Spinner Utilities */
+.spin {
+  animation: spin 1s linear infinite;
+}
 
+.spin-slow {
+  animation: spin 8s linear infinite;
+}
+
+/* NLP Engine Start Overlay / Screen */
+.nlp-engine-start-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  min-height: 500px;
+  padding: 40px;
+}
+
+.nlp-engine-card {
+  max-width: 500px;
+  width: 100%;
+  padding: 32px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  position: relative;
+  overflow: hidden;
+}
+
+.nlp-engine-icon-wrapper {
+  padding: 20px;
+  background: rgba(0, 216, 246, 0.08);
+  border-radius: 50%;
+  border: 1px solid rgba(0, 216, 246, 0.15);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.nlp-engine-icon-wrapper.pulsing {
+  animation: pulse 2s infinite;
+  border-color: var(--accent-color);
+}
+
+.nlp-engine-card h2 {
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin: 0;
+  background: linear-gradient(135deg, var(--accent-color) 0%, var(--accent-teal) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  letter-spacing: 0.5px;
+}
+
+.nlp-engine-description {
+  font-size: 0.88rem;
+  line-height: 1.6;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.nlp-engine-highlight {
+  color: var(--text-main);
+  font-weight: 600;
+}
+
+.nlp-engine-status-sub {
+  display: block;
+  margin-top: 10px;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  opacity: 0.85;
+}
+
+.nlp-engine-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-top: 8px;
+}
+
+.status-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.status-indicator.stopped {
+  background-color: var(--accent-rose);
+  box-shadow: 0 0 8px var(--accent-rose);
+}
+
+.status-indicator.initializing {
+  background-color: var(--accent-amber);
+  box-shadow: 0 0 8px var(--accent-amber);
+  animation: pulse 1s infinite;
+}
+
+.status-indicator.loaded {
+  background-color: var(--accent-teal);
+  box-shadow: 0 0 8px var(--accent-teal);
+}

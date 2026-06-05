@@ -14,7 +14,7 @@ import os
 
 # Ensure project root is in sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..")))
-from modules.extend.ner_engine import extract_entities_with_offsets
+from modules.extend.ner_engine import extract_entities_umls, extract_entities_llm
 
 router = APIRouter()
 
@@ -56,7 +56,10 @@ def get_stats():
 @router.post("/nlp/analyze")
 def analyze_text(payload: NlpAnalyzeRequest):
     try:
-        res = extract_entities_with_offsets(payload.text)
+        if payload.method == "llm":
+            res = extract_entities_llm(payload.text)
+        else:
+            res = extract_entities_umls(payload.text)
         return res
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"NLP analysis failed: {str(e)}")
@@ -97,4 +100,19 @@ def get_cui_subgraph(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch CUI subgraph: {str(e)}")
 
+@router.get("/nlp/engine_status")
+def get_engine_status():
+    try:
+        from modules.dataset_preprocessing.external.uml import is_engine_loaded
+        return {"loaded": is_engine_loaded()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
+@router.post("/nlp/start_engine")
+def start_nlp_engine():
+    try:
+        from modules.dataset_preprocessing.external.uml import load_engine
+        load_engine()
+        return {"status": "success", "message": "Engine started successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to start engine: {str(e)}")

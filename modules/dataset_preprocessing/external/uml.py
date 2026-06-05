@@ -15,64 +15,114 @@ quick_umls_path = os.getenv('QUICKUMLS_PATH')
 data_dir = os.getenv('DATA_DIR')
 base_data_dir = os.path.join(project_root, 'Thesis', 'data')
 
-# Initial load from MRCONSO.RRF
-columns = [
-    "CUI", "LAT", "TS", "LUI", "STT", "SUI", "ISPREF",
-    "AUI", "SAUI", "SCUI", "SDUI", "SAB", "TTY",
-    "CODE", "STR", "SRL", "SUPPRESS", "CVF"
-]
+_uml = None
+_matcher = None
+_tui_mapping = None
+_engine_loaded = False
 
-# Load MRCONSO.RRF
-uml = pd.read_csv(
-    os.path.join(data_dir, 'UML', "MRCONSO.RRF"),
-    sep="|",
-    header=None,
-    names=columns,
-    dtype=str,        # IMPORTANT: keep everything as string
-    index_col=False,
-    quoting=3         # avoid issues with quotes
-)
+def is_engine_loaded():
+    global _engine_loaded
+    return _engine_loaded
 
-# Drop the last empty column if it exists (common in RRF files)
-if uml.columns[-1] == 'CVF' and uml['CVF'].isna().all():
-    pass  
-# Sometimes there's an extra unnamed column due to trailing "|"
-if uml.shape[1] > len(columns):
-    uml = uml.iloc[:, :len(columns)]
+def load_engine():
+    global _uml, _matcher, _tui_mapping, _engine_loaded
+    if _engine_loaded:
+        return True
+    
+    print("Loading Clinical NLP Engine...")
+    
+    # 1. Load tui_mapping
+    try:
+        tui_mapping_path = os.path.join(data_dir, "UML", "META", 'tui_mapping.parquet')
+        df_tui = pd.read_parquet(tui_mapping_path)
+        if 'tui' in df_tui.columns:
+            df_tui = df_tui.set_index('tui')
+        _tui_mapping = df_tui
+    except Exception as e:
+        print(f"Error loading tui_mapping: {e}")
+        raise e
+        
+    # 2. Load QuickUMLS matcher
+    try:
+        _matcher = QuickUMLS(quick_umls_path, window=5)
+    except Exception as e:
+        print(f"Error initializing QuickUMLS matcher: {e}")
+        raise e
 
-uml = uml[uml['LAT'] == 'ENG']
-uml = uml[['CUI', 'SAB', 'CODE', 'STR']]
+    # 3. Load MRCONSO.RRF (uml)
+    try:
+        columns = [
+            "CUI", "LAT", "TS", "LUI", "STT", "SUI", "ISPREF",
+            "AUI", "SAUI", "SCUI", "SDUI", "SAB", "TTY",
+            "CODE", "STR", "SRL", "SUPPRESS", "CVF"
+        ]
+        mrconso_path = os.path.join(data_dir, 'UML', "MRCONSO.RRF")
+        df_uml = pd.read_csv(
+            mrconso_path,
+            sep="|",
+            header=None,
+            names=columns,
+            dtype=str,        # IMPORTANT: keep everything as string
+            index_col=False,
+            quoting=3         # avoid issues with quotes
+        )
+        # Drop the last empty column if it exists (common in RRF files)
+        if df_uml.columns[-1] == 'CVF' and df_uml['CVF'].isna().all():
+            pass  
+        # Sometimes there's an extra unnamed column due to trailing "|"
+        if df_uml.shape[1] > len(columns):
+            df_uml = df_uml.iloc[:, :len(columns)]
+            
+        df_uml = df_uml[df_uml['LAT'] == 'ENG']
+        df_uml = df_uml[['CUI', 'SAB', 'CODE', 'STR']]
+        
+        list_sab = ['MSH', 'RXNORM', 'SNOMEDCT_US', 'ATC', 'DRUGBANK', 'OMIM', 'ICD10', 'ICD10CM', 'HPO', 'ICD9CM', 'CCSR_ICD10PCS', 'ICD10AE', 'CCSR_ICD10CM', 'ICD10AMAE', 'ICD10PCS']
+        df_uml = df_uml[df_uml['SAB'].isin(list_sab)].dropna(subset=['CODE'])
+        df_uml['STR'] = df_uml['STR'].str.title()
+        
+        diag_mappings = {
+            'ICD10CM': 'ICD10',
+            'ICD10AE': 'ICD10',
+            'ICD10AMAE': 'ICD10'
+        }
+        df_uml['SAB'] = df_uml['SAB'].replace(diag_mappings)
+        _uml = df_uml
+    except Exception as e:
+        print(f"Error loading MRCONSO.RRF: {e}")
+        raise e
+        
+    _engine_loaded = True
+    print("Clinical NLP Engine loaded successfully!")
+    return True
 
-list_sab = ['MSH', 'RXNORM', 'SNOMEDCT_US', 'ATC', 'DRUGBANK', 'OMIM', 'ICD10', 'ICD10CM', 'HPO', 'ICD9CM', 'CCSR_ICD10PCS', 'ICD10AE', 'CCSR_ICD10CM', 'ICD10AMAE', 'ICD10PCS']
+def get_matcher():
+    if not _engine_loaded:
+        load_engine()
+    return _matcher
 
-uml = uml[uml['SAB'].isin(list_sab)].dropna(subset = 'CODE')
-uml['STR'] = uml['STR'].str.title()
+def get_tui_mapping():
+    if not _engine_loaded:
+        load_engine()
+    return _tui_mapping
 
-diag_mappings = {
-    'ICD10CM': 'ICD10',
-    'ICD10AE': 'ICD10',
-    'ICD10AMAE': 'ICD10'
-}
-uml['SAB'] = uml['SAB'].replace(diag_mappings)
+def get_uml():
+    if not _engine_loaded:
+        load_engine()
+    return _uml
 
-# Start working with Index
-
-# nlp = spacy.load("en_ner_bc5cdr_md")
-# Initialize matcher with lower threshold for better recall
-matcher = QuickUMLS(quick_umls_path, window=5)
-tui_mapping = pd.read_parquet(os.path.join(data_dir, "UML", "META", 'tui_mapping.parquet'))
-if 'tui' in tui_mapping.columns:
-    tui_mapping = tui_mapping.set_index('tui')
+def __getattr__(name):
+    if name == 'uml':
+        return get_uml()
+    elif name == 'matcher':
+        return get_matcher()
+    elif name == 'tui_mapping':
+        return get_tui_mapping()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 def spacy_quickumls(text):
     
-    # SciSpacy
-    # doc = nlp(text)
-    # data = [(ent.text, ent.label_) for ent in doc.ents]
-    # df_ent = pd.DataFrame(data, columns=["term", "label"])
-    
     # QuickUMLS on FULL TEXT
-    results = matcher.match(text)
+    results = get_matcher().match(text)
 
     flat_data = [item for sublist in results for item in sublist]
     
@@ -89,9 +139,10 @@ def spacy_quickumls(text):
         if not isinstance(sem_set, (set, list)):
             return None
         # Return the first matching semantic type name
+        tui_map = get_tui_mapping()
         for tui in sem_set:
-            if tui in tui_mapping.index:
-                res = tui_mapping.loc[tui, 'sty']
+            if tui in tui_map.index:
+                res = tui_map.loc[tui, 'sty']
                 return res.iloc[0] if isinstance(res, pd.Series) else res
         return None
 
@@ -173,7 +224,8 @@ def map_cui_db():
         'ICD10', 'CCSR_ICD10CM', 'MSH', 'ATC'
     ]
 
-    uml_filtered = uml[uml['SAB'].isin(target_sabs)]
+    df_uml = get_uml()
+    uml_filtered = df_uml[df_uml['SAB'].isin(target_sabs)]
 
     cui_map = (
         uml_filtered

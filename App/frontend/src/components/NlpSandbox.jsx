@@ -27,7 +27,7 @@ const SAMPLE_NOTES = [
   },
   {
     title: "Radiology Report: Chest",
-    text: "HISTORY: History of COPD and worsening dyspnea. Rule out pneumonia.\n\nFINDINGS: The lungs are hyperinflated. No focal consolidation, pneumothorax, or large pleural effusion. Calcified mediastinal lymph nodes and mild cardiomegaly are noted. Degenerative changes of the thoracic spine. EKG shows sinus tachycardia."
+    text: "EXAMINATION:  LIVER OR GALLBLADDER US (SINGLE ORGAN). \n\nTECHNIQUE:  Grey scale and color Doppler ultrasound images of the abdomen were	obtained. \n\nHISTORY: History of COPD and worsening dyspnea. Rule out pneumonia.\n\nFINDINGS: The lungs are hyperinflated. No focal consolidation, pneumothorax, or large pleural effusion. Calcified mediastinal lymph nodes and mild cardiomegaly are noted. Degenerative changes of the thoracic spine. EKG shows sinus tachycardia."
   },
   {
     title: "Admitting Note: Renal/Endocrine",
@@ -64,6 +64,11 @@ function NlpSandbox() {
   const [loading, setLoading] = useState(false);
   const [analysisResult, setAnalysisResult] = useState(null);
 
+  // Engine loading states
+  const [engineLoaded, setEngineLoaded] = useState(false);
+  const [engineChecking, setEngineChecking] = useState(true);
+  const [engineLoading, setEngineLoading] = useState(false);
+
   // Tokenization and editing states
   const [selectedToken, setSelectedToken] = useState(null);
   const [selectedEntity, setSelectedEntity] = useState(null);
@@ -96,6 +101,34 @@ function NlpSandbox() {
 
   const graphContainerRef = useRef(null);
   const [graphDimensions, setGraphDimensions] = useState({ width: 500, height: 400 });
+
+  // Check engine status on mount
+  useEffect(() => {
+    const checkEngineStatus = async () => {
+      try {
+        const response = await axios.get(`${API_BASE_URL}/nlp/engine_status`);
+        setEngineLoaded(response.data.loaded);
+      } catch (err) {
+        console.error("Failed to check NLP engine status", err);
+      } finally {
+        setEngineChecking(false);
+      }
+    };
+    checkEngineStatus();
+  }, []);
+
+  const startEngine = async () => {
+    setEngineLoading(true);
+    try {
+      await axios.post(`${API_BASE_URL}/nlp/start_engine`);
+      setEngineLoaded(true);
+    } catch (err) {
+      console.error("Failed to start NLP engine", err);
+      alert("Failed to start Clinical NLP engine: " + (err.response?.data?.detail || err.message));
+    } finally {
+      setEngineLoading(false);
+    }
+  };
 
   // Handle graph resizing inside columns
   useEffect(() => {
@@ -585,6 +618,69 @@ function NlpSandbox() {
   const visibleDbs = DB_OPTIONS.filter(db => isDbVisible(db.key));
   const hiddenDbs = DB_OPTIONS.filter(db => !isDbVisible(db.key));
 
+  if (engineChecking) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full min-h-[500px] w-full text-white">
+        <Sparkles size={32} className="text-cyan spin mb-4" />
+        <p className="text-muted text-sm font-semibold tracking-wider uppercase">Checking NLP Engine Status...</p>
+      </div>
+    );
+  }
+
+  if (!engineLoaded) {
+    return (
+      <div className="nlp-engine-start-container">
+        <div className="nlp-engine-card glass-panel animate-fade-in">
+          <div className="absolute -top-10 -right-10 w-40 h-40 bg-cyan/10 rounded-full blur-3xl"></div>
+          <div className="absolute -bottom-10 -left-10 w-40 h-40 bg-rose/10 rounded-full blur-3xl"></div>
+          
+          <div className="flex justify-center mb-2">
+            <div className={`nlp-engine-icon-wrapper ${engineLoading ? 'pulsing' : ''}`}>
+              <Brain size={56} className={`text-cyan ${engineLoading ? 'spin-slow' : ''}`} />
+            </div>
+          </div>
+          
+          <h2>Clinical NLP Engine</h2>
+          
+          <p className="nlp-engine-description">
+            The clinical NLP engine utilizes <span className="nlp-engine-highlight">QuickUMLS</span> and the <span className="nlp-engine-highlight">UMLS Metathesaurus</span> to extract, map, and resolve biomedical concepts from unstructured clinical notes.
+            <span className="nlp-engine-status-sub">
+              Initializing the engine loads the full dictionaries (ICD-10, SNOMED CT, RxNorm) and entity indexes into memory. This process may take up to 60 seconds.
+            </span>
+          </p>
+
+          <div className="flex flex-col gap-4 items-center w-full mt-2">
+            <button
+              className={`search-btn w-full max-w-[250px] flex items-center justify-center gap-2 text-[15px] py-3 shadow-lg ${
+                engineLoading ? 'opacity-70 cursor-not-allowed' : ''
+              }`}
+              onClick={startEngine}
+              disabled={engineLoading}
+              style={{ height: '50px' }}
+            >
+              {engineLoading ? (
+                <>
+                  <Sparkles size={18} className="spin" />
+                  <span>Starting Engine...</span>
+                </>
+              ) : (
+                <>
+                  <Play size={18} />
+                  <span>Start Engine</span>
+                </>
+              )}
+            </button>
+            
+            <div className="nlp-engine-status-row">
+              <span className={`status-indicator ${engineLoading ? 'initializing' : 'stopped'}`}></span>
+              <span>Status: {engineLoading ? 'Initializing Dictionaries...' : 'Offline / Unloaded'}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="nlp-sandbox-layout">
       {/* LEFT COLUMN: Note Input and Selection */}
@@ -626,7 +722,7 @@ function NlpSandbox() {
 
         <div className="nlp-settings-row">
           <div className="setting-control">
-            <span className="section-label">NLP Algorithm</span>
+            <span className="section-label">Method</span>
             <select
               className="custom-select"
               value={method}

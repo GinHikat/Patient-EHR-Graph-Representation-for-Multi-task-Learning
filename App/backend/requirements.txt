@@ -3,3 +3,4 @@ uvicorn
 neo4j
 python-dotenv
 pydantic
+underthesea
