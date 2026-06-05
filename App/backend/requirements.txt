@@ -6,3 +6,6 @@ pydantic
 underthesea
 pandas
 numpy
+quickumls
+spacy
+scispacy
