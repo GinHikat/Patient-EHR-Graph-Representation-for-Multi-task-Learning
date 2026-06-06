@@ -8,11 +8,12 @@ from transformers import AutoModel, AutoTokenizer, AutoModelForSequenceClassific
 script_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(os.path.dirname(script_dir))
 
-map_dir = os.path.join(project_root, 'data')
+map_dir = os.path.join(project_root, 'data', 'Timeline')
 diagnosis_map = pd.read_csv(os.path.join(map_dir, 'diagnosis_map.csv'))
 # procedure_map = pd.read_csv(os.path.join(map_dir, 'procedure_map.csv'))
 
 diagnosis_dict = diagnosis_map.set_index('ccsr_description')['ccsr_category'].to_dict()
+diagnosis_icd_dict = diagnosis_map.groupby('ccsr_description')['icd_code'].apply(lambda x: ', '.join(list(dict.fromkeys(x.astype(str)))[:5])).to_dict()
 # procedure_dict = procedure_map.set_index('ccsr_description')['ccsr_category'].to_dict()
 
 from modules.models.preparation.processing import Extractor

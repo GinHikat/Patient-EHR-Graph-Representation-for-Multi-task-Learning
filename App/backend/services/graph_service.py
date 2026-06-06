@@ -424,31 +424,36 @@ def get_cui_subgraph_data(
             if not is_valid_id(val):
                 continue
                 
-            val_clean = val.strip()
+            val_clean = str(val).strip()
             # Strip "HP:" prefix for HPO matching
             if field == "hpo_id" and val_clean.upper().startswith("HP:"):
                 val_clean = val_clean[3:]
                 
+            vals_list = [v.strip() for v in val_clean.split(',')]
+            
             # Handle potential numeric type matching
-            params = {"val": val_clean}
-            has_num = False
-            try:
-                val_num = float(val_clean)
-                if val_num.is_integer():
-                    val_num = int(val_num)
-                params["val_num"] = val_num
-                has_num = True
-            except ValueError:
-                pass
+            params = {"vals_list": vals_list}
+            vals_num_list = []
+            for v in vals_list:
+                try:
+                    val_num = float(v)
+                    if val_num.is_integer():
+                        val_num = int(val_num)
+                    vals_num_list.append(val_num)
+                except ValueError:
+                    pass
+            
+            if vals_num_list:
+                params["vals_num_list"] = vals_num_list
                 
+            has_num = len(vals_num_list) > 0
+
             find_query = f"""
             MATCH (c:`{namespace}`)
-            WHERE (c:Disease OR c:Drug OR c:Phenotype OR c:Diagnosis OR c:Lab OR c:Procedure OR c:Patient OR c:Admission OR c:External OR c:CTD OR c:HPO OR c:DB)
+            WHERE (c:Disease OR c:Drug OR c:Phenotype OR c:Diagnosis OR c:DiagnosisCategory OR c:Lab OR c:Procedure OR c:Patient OR c:Admission OR c:External OR c:CTD OR c:HPO OR c:DB)
               AND (
-                c.id = $val OR c.id = [$val]
-                OR c.{field} = $val OR c.{field} = [$val]
-                {"OR c.id = $val_num OR c.id = [$val_num]" if has_num else ""}
-                {"OR c." + field + " = $val_num OR c." + field + " = [$val_num]" if has_num else ""}
+                c.id IN $vals_list OR any(x IN $vals_list WHERE c.id = [x])
+                {"OR c.id IN $vals_num_list OR any(x IN $vals_num_list WHERE c.id = [x])" if has_num else ""}
               )
             RETURN elementId(c) as eid
             LIMIT 1
@@ -468,8 +473,13 @@ def get_cui_subgraph_data(
         MATCH (c:`{namespace}`)
         WHERE elementId(c) = $eid
         OPTIONAL MATCH (c)-[r]-(m)
+        WHERE NOT "Admission" IN labels(m)
+        WITH c, r, m
+        OPTIONAL MATCH (m)-[r2]-()
+        WITH c, r, m, count(r2) AS degree
+        ORDER BY degree DESC
+        LIMIT 50
         RETURN c, r, m
-        LIMIT 200
         """
         result = session.run(subgraph_query, eid=central_node_eid)
         nodes = {}

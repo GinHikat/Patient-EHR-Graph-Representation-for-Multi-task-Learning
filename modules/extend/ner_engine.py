@@ -345,3 +345,42 @@ def extract_entities_llm(text: str) -> dict:
             }
         ]
     }
+
+_dl_extractor = None
+
+def extract_entities_dl(text: str, threshold: float = 0.5) -> dict:
+    """
+    Extract diagnosis categories using ProcDiagExtractor.
+    """
+    global _dl_extractor
+    
+    from modules.models.extractor import ProcDiagExtractor, diagnosis_dict, diagnosis_icd_dict
+    
+    if _dl_extractor is None:
+        _dl_extractor = ProcDiagExtractor("statedict_900_202")
+        
+    predictions = _dl_extractor.predict(text, threshold=threshold)
+    
+    entities = []
+    for desc, prob in predictions.items():
+        ccsr_category = diagnosis_dict.get(desc, desc)
+        icd_codes = diagnosis_icd_dict.get(desc, "")
+        entities.append({
+            "start": 0,
+            "end": len(text),
+            "text": text,
+            "canonical_name": desc,
+            "cui": ccsr_category,
+            "similarity": float(prob),
+            "type": "Diagnosis",
+            "category": "Diagnosis",
+            "codes": {
+                "icd10": icd_codes
+            }
+        })
+        
+    return {
+        "original_text": text,
+        "sentences": [text],
+        "entities": entities
+    }

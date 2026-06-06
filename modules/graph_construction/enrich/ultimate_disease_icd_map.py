@@ -7,13 +7,14 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..
 if project_root not in sys.path:
     sys.path.append(project_root)
 
+
 from dotenv import load_dotenv
 load_dotenv() 
 base_data_dir = os.path.join(project_root, 'data')
 data_dir = os.getenv('DATA_DIR')
 
 csv_path = os.path.join(base_data_dir, 'nodes.parquet')
-sct_root = os.path.join(data_dir, 'Mapping', 'SnomedCT', 'csv')
+sct_root = os.path.join(data_dir, 'SnomedCT', 'csv')
 uml_path = os.path.join(base_data_dir, 'utils', 'uml.csv')
 
 f_ext_map = f'{sct_root}/Refset/Map/iisssccRefset_ExtendedMap.csv'
@@ -22,12 +23,14 @@ f_rel = f'{sct_root}/Terminology/relationship.csv'
 f_assoc = f'{sct_root}/Refset/Content/cRefset_Association.csv'
 
 # Diagnosis nodes, these are originally ICD format
-filtered_df = duckdb.query(f"""
-    SELECT * 
-    FROM read_parquet('{csv_path}') 
-    WHERE labels ILIKE '%Diagnosis%'
-""").to_df()
-filtered_df = filtered_df[['id', 'labels', 'name']]
+# filtered_df = duckdb.query(f"""
+#     SELECT * 
+#     FROM read_parquet('{csv_path}') 
+#     WHERE labels ILIKE '%Diagnosis%'
+# """).to_df()
+# filtered_df = filtered_df[['id', 'labels', 'name']]
+
+filtered_df = pd.read_csv(os.path.join(base_data_dir, 'diagnosis.csv'))
 
 # Start mapping ICD to OMIM, HPO and MESH using SnomedCT and UML 
 def get_clean_clinical_mappings(icd_list):

@@ -61,6 +61,7 @@ const TYPE_COLORS = {
 function NlpSandbox() {
   const [inputText, setInputText] = useState(SAMPLE_NOTES[0].text);
   const [method, setMethod] = useState("hybrid");
+  const [dlThreshold, setDlThreshold] = useState(0.5);
   const [loading, setLoading] = useState(false);
   const [analysisResult, setAnalysisResult] = useState(null);
 
@@ -151,10 +152,14 @@ function NlpSandbox() {
     setSelectedToken(null);
     setSelectedEntity(null);
     try {
-      const response = await axios.post(`${API_BASE_URL}/nlp/analyze`, {
+      const payload = {
         text: inputText,
         method: method
-      });
+      };
+      if (method === "dl") {
+        payload.threshold = dlThreshold;
+      }
+      const response = await axios.post(`${API_BASE_URL}/nlp/analyze`, payload);
       setAnalysisResult(response.data);
     } catch (err) {
       console.error("NLP analysis failed", err);
@@ -416,6 +421,67 @@ function NlpSandbox() {
       });
     };
 
+    if (method === "dl") {
+      elements.push(
+        <React.Fragment key="plain-full">
+          {renderPlainSpans(original_text, 0)}
+        </React.Fragment>
+      );
+      
+      elements.push(
+        <div key="dl-tags-container" className="mt-6 border-t border-[var(--border-color)] pt-4" style={{ lineHeight: "normal" }}>
+          <h4 className="text-sm font-semibold mb-3 text-cyan-400">Document-Level Predictions</h4>
+          <div className="flex flex-wrap gap-2">
+            {sortedEntities.map((entity, idx) => {
+              const isSelected = selectedEntity && selectedEntity.canonical_name === entity.canonical_name;
+              let tokenClass = "nlp-token entity nlp-span-diagnosis";
+              if (isSelected) tokenClass += " selected";
+              return (
+                <span
+                  key={`dl-entity-${idx}`}
+                  className={tokenClass}
+                  style={{ display: "inline-block", cursor: "pointer", padding: "6px 12px", borderRadius: "16px" }}
+                  onClick={() => {
+                    setSelectedEntity(entity);
+                    setSelectedToken({
+                      text: "Document-Level Prediction",
+                      start: 0,
+                      end: original_text.length || 0,
+                      isWord: false
+                    });
+                    setEditCui(entity.cui || "");
+                    setEditCanonicalName(entity.canonical_name || "");
+                    setEditCategory(entity.category || "Diagnosis");
+                    setEditDetailClass(entity.type || "Diagnosis");
+                    setEditIcd10(entity.codes?.icd10 || "");
+                    setEditRxnorm(entity.codes?.rxnorm || "");
+                    setEditSnomed(entity.codes?.snomed || "");
+                    setEditLoinc(entity.codes?.loinc || "");
+                    setEditMesh(entity.codes?.mesh || "");
+                    setEditOmim(entity.codes?.omim || "");
+                    setEditIcd9(entity.codes?.icd9 || "");
+                    setEditDrugbank(entity.codes?.drugbank || "");
+                    setEditHpo(entity.codes?.hpo || "");
+                    setEditPubchem(entity.codes?.pubchem || "");
+                    setEditPubmed(entity.codes?.pubmed || "");
+                    setManuallyAddedDbs([]);
+                  }}
+                >
+                  {entity.canonical_name} <span className="opacity-70 ml-1 text-xs">({(entity.similarity * 100).toFixed(0)}%)</span>
+                </span>
+              );
+            })}
+          </div>
+        </div>
+      );
+      
+      return (
+        <div className="nlp-highlighted-content" style={{ lineHeight: "2.9rem" }}>
+          {elements}
+        </div>
+      );
+    }
+
     sortedEntities.forEach((entity, idx) => {
       // Add leading plain text (rendered word by word)
       if (entity.start > lastIndex) {
@@ -533,7 +599,7 @@ function NlpSandbox() {
           nodeLabel={(node) => `
             <div style="background: rgba(0,0,0,0.9); padding: 8px; border-radius: 4px; color: white; font-family: sans-serif; font-size: 11px;">
               <div style="color: #60a5fa; font-weight: bold; margin-bottom: 2px;">${node.labels.filter(l => l !== "Test").join(', ')}</div>
-              <div>${node.properties?.name || node.properties?.title || node.id}</div>
+              <div>${node.properties?.name || node.properties?.title || node.properties?.long_title || node.properties?.canonical_name || node.id}</div>
             </div>
           `}
           nodeCanvasObject={(node, ctx, globalScale) => {
@@ -555,6 +621,26 @@ function NlpSandbox() {
           linkColor={() => "rgba(255, 255, 255, 0.2)"}
           linkWidth={1.5}
           linkDirectionalArrowLength={2.5}
+          linkLabel={(link) => link.type}
+          linkCanvasObjectMode={() => 'after'}
+          linkCanvasObject={(link, ctx) => {
+            const MAX_FONT_SIZE = 4;
+            const LABEL = link.type;
+            if (!LABEL) return;
+            ctx.font = `${MAX_FONT_SIZE}px Sans-Serif`;
+            const textWidth = ctx.measureText(LABEL).width;
+            const bckgDimensions = [textWidth, MAX_FONT_SIZE].map(n => n + MAX_FONT_SIZE * 0.2);
+
+            ctx.save();
+            ctx.translate(link.source.x + (link.target.x - link.source.x) / 2, link.source.y + (link.target.y - link.source.y) / 2);
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+            ctx.fillRect(-bckgDimensions[0] / 2, -bckgDimensions[1] / 2, bckgDimensions[0], bckgDimensions[1]);
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = 'rgba(255,255,255,0.7)';
+            ctx.fillText(LABEL, 0, 0);
+            ctx.restore();
+          }}
           cooldownTicks={80}
           backgroundColor="rgba(0,0,0,0)"
         />
@@ -731,8 +817,24 @@ function NlpSandbox() {
               <option value="hybrid">Hybrid Engine (QuickUMLS + LLM)</option>
               <option value="local">UMLS Dictionary Matcher (Local)</option>
               <option value="llm">Zero-Shot Medical LLM (Cloud)</option>
+              <option value="dl">Deep Learning</option>
             </select>
           </div>
+          
+          {method === "dl" && (
+            <div className="setting-control" style={{ minWidth: '150px' }}>
+              <span className="section-label">Threshold ({dlThreshold})</span>
+              <input
+                type="range"
+                min="0.5"
+                max="1"
+                step="0.05"
+                value={dlThreshold}
+                onChange={(e) => setDlThreshold(parseFloat(e.target.value))}
+                className="w-full accent-cyan"
+              />
+            </div>
+          )}
           
           <button
             className="search-btn run-nlp-btn"
@@ -825,55 +927,80 @@ function NlpSandbox() {
 
               {/* Tag Editor Form */}
               <div className="entity-card-form">
-                <div className="setting-control w-full">
-                  <label className="section-label text-xs">Concept Class</label>
-                  <select
-                    className="custom-select w-full mt-1"
-                    value={editCategory}
-                    onChange={(e) => setEditCategory(e.target.value)}
-                  >
-                    <option value="Disease">Disease</option>
-                    <option value="Diagnosis">Diagnosis</option>
-                    <option value="Phenotype">Phenotype</option>
-                    <option value="Body Parts">Body Parts</option>
-                    <option value="Drugs">Drugs</option>
-                    <option value="Chemicals">Chemicals</option>
-                    <option value="Procedures">Procedures</option>
-                    <option value="Labs">Labs</option>
-                    <option value="Devices">Devices</option>
-                  </select>
-                </div>
+                {selectedToken.text === "Document-Level Prediction" ? (
+                  <>
+                    <div className="setting-control w-full">
+                      <label className="section-label text-xs">Category Name</label>
+                      <input
+                        type="text"
+                        className="custom-input w-full mt-1 bg-white/5 border-white/10"
+                        value={editCanonicalName}
+                        onChange={(e) => setEditCanonicalName(e.target.value)}
+                      />
+                    </div>
+                    <div className="setting-control w-full">
+                      <label className="section-label text-xs">Category ID</label>
+                      <input
+                        type="text"
+                        className="custom-input w-full mt-1 bg-white/5 border-white/10"
+                        value={editCui}
+                        onChange={(e) => setEditCui(e.target.value)}
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="setting-control w-full">
+                      <label className="section-label text-xs">Concept Class</label>
+                      <select
+                        className="custom-select w-full mt-1"
+                        value={editCategory}
+                        onChange={(e) => setEditCategory(e.target.value)}
+                      >
+                        <option value="Disease">Disease</option>
+                        <option value="Diagnosis">Diagnosis</option>
+                        <option value="Phenotype">Phenotype</option>
+                        <option value="Body Parts">Body Parts</option>
+                        <option value="Drugs">Drugs</option>
+                        <option value="Chemicals">Chemicals</option>
+                        <option value="Procedures">Procedures</option>
+                        <option value="Labs">Labs</option>
+                        <option value="Devices">Devices</option>
+                      </select>
+                    </div>
 
-                <div className="setting-control w-full">
-                  <label className="section-label text-xs">Detail Class (UMLS Original)</label>
-                  <input
-                    type="text"
-                    className="custom-input w-full mt-1 bg-white/5 border-white/10 text-muted cursor-not-allowed opacity-80"
-                    value={editDetailClass}
-                    readOnly
-                    disabled
-                  />
-                </div>
+                    <div className="setting-control w-full">
+                      <label className="section-label text-xs">Detail Class (UMLS Original)</label>
+                      <input
+                        type="text"
+                        className="custom-input w-full mt-1 bg-white/5 border-white/10 text-muted cursor-not-allowed opacity-80"
+                        value={editDetailClass}
+                        readOnly
+                        disabled
+                      />
+                    </div>
 
-                <div className="setting-control w-full">
-                  <label className="section-label text-xs">Canonical Term</label>
-                  <input
-                    type="text"
-                    className="custom-input w-full mt-1"
-                    value={editCanonicalName}
-                    onChange={(e) => setEditCanonicalName(e.target.value)}
-                  />
-                </div>
+                    <div className="setting-control w-full">
+                      <label className="section-label text-xs">Canonical Term</label>
+                      <input
+                        type="text"
+                        className="custom-input w-full mt-1"
+                        value={editCanonicalName}
+                        onChange={(e) => setEditCanonicalName(e.target.value)}
+                      />
+                    </div>
 
-                <div className="setting-control w-full">
-                  <label className="section-label text-xs">UMLS CUI</label>
-                  <input
-                    type="text"
-                    className="custom-input w-full mt-1"
-                    value={editCui}
-                    onChange={(e) => setEditCui(e.target.value)}
-                  />
-                </div>
+                    <div className="setting-control w-full">
+                      <label className="section-label text-xs">UMLS CUI</label>
+                      <input
+                        type="text"
+                        className="custom-input w-full mt-1"
+                        value={editCui}
+                        onChange={(e) => setEditCui(e.target.value)}
+                      />
+                    </div>
+                  </>
+                )}
 
                 <div className="border-t border-white/5 pt-3">
                   <span className="text-xs text-muted font-semibold block mb-2">Vocab Mappings</span>

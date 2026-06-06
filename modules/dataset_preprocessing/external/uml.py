@@ -31,7 +31,7 @@ def load_engine():
     
     print("Loading Clinical NLP Engine...")
     
-    # 1. Load tui_mapping
+    # Load tui_mapping
     try:
         tui_mapping_path = os.path.join(data_dir, "UML", "META", 'tui_mapping.parquet')
         df_tui = pd.read_parquet(tui_mapping_path)
@@ -42,51 +42,57 @@ def load_engine():
         print(f"Error loading tui_mapping: {e}")
         raise e
         
-    # 2. Load QuickUMLS matcher
+    # Load QuickUMLS matcher
     try:
         _matcher = QuickUMLS(quick_umls_path, window=5)
     except Exception as e:
         print(f"Error initializing QuickUMLS matcher: {e}")
         raise e
 
-    # 3. Load MRCONSO.RRF (uml)
+    # Load MRCONSO.RRF (uml)
     try:
-        columns = [
-            "CUI", "LAT", "TS", "LUI", "STT", "SUI", "ISPREF",
-            "AUI", "SAUI", "SCUI", "SDUI", "SAB", "TTY",
-            "CODE", "STR", "SRL", "SUPPRESS", "CVF"
-        ]
-        mrconso_path = os.path.join(data_dir, 'UML', "MRCONSO.RRF")
-        df_uml = pd.read_csv(
-            mrconso_path,
-            sep="|",
-            header=None,
-            names=columns,
-            dtype=str,        # IMPORTANT: keep everything as string
-            index_col=False,
-            quoting=3         # avoid issues with quotes
-        )
-        # Drop the last empty column if it exists (common in RRF files)
-        if df_uml.columns[-1] == 'CVF' and df_uml['CVF'].isna().all():
-            pass  
-        # Sometimes there's an extra unnamed column due to trailing "|"
-        if df_uml.shape[1] > len(columns):
-            df_uml = df_uml.iloc[:, :len(columns)]
+        optimized_path = os.path.join(data_dir, 'UML', "MRCONSO_optimized.parquet")
+        if os.path.exists(optimized_path):
+            print("Loading optimized MRCONSO parquet...")
+            _uml = pd.read_parquet(optimized_path)
+        else:
+            print("Optimized parquet not found. Loading raw MRCONSO.RRF...")
+            columns = [
+                "CUI", "LAT", "TS", "LUI", "STT", "SUI", "ISPREF",
+                "AUI", "SAUI", "SCUI", "SDUI", "SAB", "TTY",
+                "CODE", "STR", "SRL", "SUPPRESS", "CVF"
+            ]
+            mrconso_path = os.path.join(data_dir, 'UML', "MRCONSO.RRF")
+            df_uml = pd.read_csv(
+                mrconso_path,
+                sep="|",
+                header=None,
+                names=columns,
+                dtype=str,        # IMPORTANT: keep everything as string
+                index_col=False,
+                quoting=3         # avoid issues with quotes
+            )
+            # Drop the last empty column if it exists (common in RRF files)
+            if df_uml.columns[-1] == 'CVF' and df_uml['CVF'].isna().all():
+                pass  
+            # Sometimes there's an extra unnamed column due to trailing "|"
+            if df_uml.shape[1] > len(columns):
+                df_uml = df_uml.iloc[:, :len(columns)]
+                
+            df_uml = df_uml[df_uml['LAT'] == 'ENG']
+            df_uml = df_uml[['CUI', 'SAB', 'CODE', 'STR']]
             
-        df_uml = df_uml[df_uml['LAT'] == 'ENG']
-        df_uml = df_uml[['CUI', 'SAB', 'CODE', 'STR']]
-        
-        list_sab = ['MSH', 'RXNORM', 'SNOMEDCT_US', 'ATC', 'DRUGBANK', 'OMIM', 'ICD10', 'ICD10CM', 'HPO', 'ICD9CM', 'CCSR_ICD10PCS', 'ICD10AE', 'CCSR_ICD10CM', 'ICD10AMAE', 'ICD10PCS']
-        df_uml = df_uml[df_uml['SAB'].isin(list_sab)].dropna(subset=['CODE'])
-        df_uml['STR'] = df_uml['STR'].str.title()
-        
-        diag_mappings = {
-            'ICD10CM': 'ICD10',
-            'ICD10AE': 'ICD10',
-            'ICD10AMAE': 'ICD10'
-        }
-        df_uml['SAB'] = df_uml['SAB'].replace(diag_mappings)
-        _uml = df_uml
+            list_sab = ['MSH', 'RXNORM', 'SNOMEDCT_US', 'ATC', 'DRUGBANK', 'OMIM', 'ICD10', 'ICD10CM', 'HPO', 'ICD9CM', 'CCSR_ICD10PCS', 'ICD10AE', 'CCSR_ICD10CM', 'ICD10AMAE', 'ICD10PCS']
+            df_uml = df_uml[df_uml['SAB'].isin(list_sab)].dropna(subset=['CODE'])
+            df_uml['STR'] = df_uml['STR'].str.title()
+            
+            diag_mappings = {
+                'ICD10CM': 'ICD10',
+                'ICD10AE': 'ICD10',
+                'ICD10AMAE': 'ICD10'
+            }
+            df_uml['SAB'] = df_uml['SAB'].replace(diag_mappings)
+            _uml = df_uml
     except Exception as e:
         print(f"Error loading MRCONSO.RRF: {e}")
         raise e
