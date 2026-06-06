@@ -31,6 +31,21 @@ def to_list(df, col):
     
     df[col] = df[col].apply(safe_parse)
 
+def parse_by_pipe(df, col):
+    """
+    Parse a column of pipe-separated strings into lists.
+    
+    Args:
+        df (pd.DataFrame): The DataFrame to process.
+        col (str): The column to parse.
+    """
+    def safe_parse(x):
+        if not isinstance(x, str) or not x.strip():
+            return []
+        return [item.strip() for item in x.split('|') if item.strip()]
+    
+    df[col] = df[col].apply(safe_parse)
+
 def title(df, col):
     '''
     Convert a column of strings to title case.

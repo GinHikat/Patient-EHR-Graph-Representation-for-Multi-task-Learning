@@ -14,8 +14,8 @@ def clean_id(corrupt_id):
     return corrupt_id
 
 def main():
-    file_diseases = os.path.join(os.path.dirname(__file__), 'vietnamese_icd10_diseases.csv')
-    
+    # file_diseases = os.path.join(os.path.dirname(__file__), 'vietnamese_icd10_diseases.csv')
+    file_diseases = 'D:/Study/Education/Projects/Thesis/data/vietnamese/crawled/vietnamese_icd10_diseases.csv'  
     if not os.path.exists(file_diseases):
         print("[ERROR] Disease CSV file not found.")
         return
