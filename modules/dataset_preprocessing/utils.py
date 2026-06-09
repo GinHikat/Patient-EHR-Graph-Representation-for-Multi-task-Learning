@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import sys, os
 import duckdb
+import unicodedata
 project_root = os.path.abspath(os.path.join(os.getcwd(), ".."))
 if project_root not in sys.path:
     sys.path.append(project_root)
@@ -55,6 +56,15 @@ def title(df, col):
         col (str): The column to convert.
     '''
     df[col] = df[col].apply(lambda x: x.title())
+
+def normalize_text(text):
+    if not isinstance(text, str):
+        return text
+    # Decompose unicode, then re-encode to NFC (canonical composition)
+    text = unicodedata.normalize('NFC', text)
+    # Lowercase and strip whitespace
+    text = text.strip().lower()
+    return text
 
 def safe_parse(x):
     '''
