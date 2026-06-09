@@ -8,3 +8,7 @@ python-dotenv
 scispacy
 spacy
 quickumls
+datasets 
+accelerate
+peft
+trl

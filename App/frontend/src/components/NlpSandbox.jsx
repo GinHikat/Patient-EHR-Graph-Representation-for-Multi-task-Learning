@@ -729,9 +729,9 @@ function NlpSandbox() {
           <h2>Clinical NLP Engine</h2>
           
           <p className="nlp-engine-description">
-            The clinical NLP engine utilizes <span className="nlp-engine-highlight">QuickUMLS</span> and the <span className="nlp-engine-highlight">UMLS Metathesaurus</span> to extract, map, and resolve biomedical concepts from unstructured clinical notes.
+            The clinical NLP engine utilizes <span className="nlp-engine-highlight">QuickUMLs</span>, <span className="nlp-engine-highlight">Deep Learning</span> and <span className="nlp-engine-highlight">Large Language Models</span> to extract, map, and resolve biomedical concepts from unstructured clinical notes.
             <span className="nlp-engine-status-sub">
-              Initializing the engine loads the full dictionaries (ICD-10, SNOMED CT, RxNorm) and entity indexes into memory. This process may take up to 60 seconds.
+              Initializing the engine loads the full dictionaries and entity indexes into memory. This process may take up to 10 seconds.
             </span>
           </p>
 
