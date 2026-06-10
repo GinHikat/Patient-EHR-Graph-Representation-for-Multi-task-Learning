@@ -30,8 +30,8 @@ const SAMPLE_NOTES = [
     text: "EXAMINATION:  LIVER OR GALLBLADDER US (SINGLE ORGAN). \n\nTECHNIQUE:  Grey scale and color Doppler ultrasound images of the abdomen were	obtained. \n\nHISTORY: History of COPD and worsening dyspnea. Rule out pneumonia.\n\nFINDINGS: The lungs are hyperinflated. No focal consolidation, pneumothorax, or large pleural effusion. Calcified mediastinal lymph nodes and mild cardiomegaly are noted. Degenerative changes of the thoracic spine. EKG shows sinus tachycardia."
   },
   {
-    title: "Admitting Note: Renal/Endocrine",
-    text: "Pt with history of ESRD on hemodialysis, CKD stage 5. Presented with generalized fatigue and weakness. Lab results: potassium 6.2 mmol/L (critical high), creatinine 5.8 mg/dL. EKG showed peaked T-waves. Treated with IV calcium gluconate and insulin/dextrose in the ER. Admitted for urgent dialysis."
+    title: "Vietnamese Note",
+    text: "Bệnh nhân nam, 45 tuổi, nhập viện vì cơn đau tương tự như cơn đau thắt ngực nhưng thường nghiêm trọng hơn và kéo dài; thường xuyên hơn kèm theo khó thở , buồn nôn và nôn ; và thuyên giảm ít hoặc chỉ tạm thời bằng cách nghỉ ngơi hoặc nitroglycerin ."
   }
 ];
 
@@ -62,6 +62,7 @@ function NlpSandbox() {
   const [inputText, setInputText] = useState(SAMPLE_NOTES[0].text);
   const [method, setMethod] = useState("hybrid");
   const [dlThreshold, setDlThreshold] = useState(0.5);
+  const [nerModel, setNerModel] = useState("vihealthbert");
   const [loading, setLoading] = useState(false);
   const [analysisResult, setAnalysisResult] = useState(null);
 
@@ -158,6 +159,8 @@ function NlpSandbox() {
       };
       if (method === "dl") {
         payload.threshold = dlThreshold;
+      } else if (method === "ner") {
+        payload.ner_model = nerModel;
       }
       const response = await axios.post(`${API_BASE_URL}/nlp/analyze`, payload);
       setAnalysisResult(response.data);
@@ -172,7 +175,8 @@ function NlpSandbox() {
   // Helper to segment note text into words, punctuation, and whitespaces
   const tokenizeText = (text) => {
     if (!text) return [];
-    const regex = /(\w+|[^\w\s]|\s+)/g;
+    // Use Unicode property escapes to match any language letter (including Vietnamese)
+    const regex = /([\p{L}\p{N}_]+|[^\p{L}\p{N}_\s]|\s+)/gu;
     let match;
     const tokens = [];
     while ((match = regex.exec(text)) !== null) {
@@ -181,7 +185,7 @@ function NlpSandbox() {
         text: textVal,
         start: match.index,
         end: regex.lastIndex,
-        isWord: /\w+/.test(textVal)
+        isWord: /^[\p{L}\p{N}_]+$/u.test(textVal)
       });
     }
     return tokens;
@@ -818,6 +822,7 @@ function NlpSandbox() {
               <option value="local">UMLS Dictionary Matcher (Local)</option>
               <option value="llm">Zero-Shot Medical LLM (Cloud)</option>
               <option value="dl">Deep Learning</option>
+              <option value="ner">NER + Retrieval</option>
             </select>
           </div>
           
@@ -832,6 +837,20 @@ function NlpSandbox() {
                 value={dlThreshold}
                 onChange={(e) => setDlThreshold(parseFloat(e.target.value))}
                 className="w-full accent-cyan"
+              />
+            </div>
+          )}
+          
+          {method === "ner" && (
+            <div className="setting-control" style={{ minWidth: '150px' }}>
+              <span className="section-label">NER Model</span>
+              <input
+                type="text"
+                value={nerModel}
+                onChange={(e) => setNerModel(e.target.value)}
+                placeholder="vihealthbert"
+                className="custom-input w-full mt-1 bg-white/5 border-white/10"
+                style={{ padding: "8px 12px", borderRadius: "6px" }}
               />
             </div>
           )}
