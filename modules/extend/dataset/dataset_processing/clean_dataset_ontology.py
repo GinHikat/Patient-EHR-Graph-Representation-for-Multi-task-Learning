@@ -15,7 +15,7 @@ def clean_text(text):
     return text
 
 def clean_dataset():
-    base_dir = r"d:\Study\Education\Projects\Thesis\data\viettel\vietnamese_ner"
+    base_dir = r"data\viettel\vietnamese_ner"
     input_jsonl = os.path.join(base_dir, "unified_qwen_dataset.jsonl")
     output_jsonl = os.path.join(base_dir, "unified_qwen_dataset_cleaned.jsonl")
     mapped_csv = os.path.join(base_dir, "ground_truth_vn_entity.csv")

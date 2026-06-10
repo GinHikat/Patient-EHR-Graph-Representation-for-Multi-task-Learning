@@ -14,7 +14,7 @@ import os
 
 # Ensure project root is in sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..")))
-from modules.extend.ner_engine import extract_entities_umls, extract_entities_llm, extract_entities_dl
+from modules.extend.ner_engine import extract_entities_umls, extract_entities_llm, extract_entities_dl, extract_entities_ner
 
 router = APIRouter()
 
@@ -22,6 +22,7 @@ class NlpAnalyzeRequest(BaseModel):
     text: str
     method: Optional[str] = "hybrid"
     threshold: Optional[float] = 0.5
+    ner_model: Optional[str] = "vihealthbert"
 
 @router.get("/graph", response_model=GraphResponse)
 def get_graph(
@@ -61,6 +62,8 @@ def analyze_text(payload: NlpAnalyzeRequest):
             res = extract_entities_llm(payload.text)
         elif payload.method == "dl":
             res = extract_entities_dl(payload.text, threshold=payload.threshold)
+        elif payload.method == "ner":
+            res = extract_entities_ner(payload.text, model_name=payload.ner_model)
         else:
             res = extract_entities_umls(payload.text)
         return res

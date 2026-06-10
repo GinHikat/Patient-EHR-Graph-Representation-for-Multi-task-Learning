@@ -4,9 +4,9 @@ from tqdm import tqdm
 
 # Absolute Paths
 umls_parquet = r'F:\Din\Study\Education\Projects\Thesis\data\UML\MRCONSO_optimized.parquet'
-diag_csv = r'd:\Study\Education\Projects\Thesis\data\viettel\combine\diagnosis_10.csv'
-proc_csv = r'd:\Study\Education\Projects\Thesis\data\viettel\combine\procedure_9.csv'
-output_txt = r'd:\Study\Education\Projects\Thesis\data\viettel\combine\umls_match_report.txt'
+diag_csv = r'data\viettel\combine\diagnosis_10.csv'
+proc_csv = r'data\viettel\combine\procedure_9.csv'
+output_txt = r'data\viettel\combine\umls_match_report.txt'
 
 def main():
     print("Loading CSV files to extract target codes...")

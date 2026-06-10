@@ -37,7 +37,7 @@ SEMTYPE_MAPPING = {
 }
 
 def build_benchmark():
-    base_dir = r"d:\Study\Education\Projects\Thesis\data\viettel\vietnamese_ner"
+    base_dir = r"data\viettel\vietnamese_ner"
     qwen_dataset_path = os.path.join(base_dir, "cleaned_qwen_dataset.jsonl")
     test_split_path = os.path.join(base_dir, "training", "vietnamese", "document_classification", "doc_class_test.jsonl")
     mapped_entities_path = os.path.join(base_dir, "ground_truth_vn_entity.csv")

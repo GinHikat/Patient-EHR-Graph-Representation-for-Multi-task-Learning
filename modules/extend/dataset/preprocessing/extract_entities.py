@@ -3,8 +3,8 @@ import csv
 from collections import defaultdict
 import os
 
-input_file = r"d:\Study\Education\Projects\Thesis\data\viettel\vietnamese_ner\unified_qwen_dataset.jsonl"
-output_file = r"d:\Study\Education\Projects\Thesis\data\viettel\vietnamese_ner\aggregated_entities.csv"
+input_file = r"data\viettel\vietnamese_ner\unified_qwen_dataset.jsonl"
+output_file = r"data\viettel\vietnamese_ner\aggregated_entities.csv"
 
 def extract_unique_entities():
     print(f"Reading dataset from: {input_file}")

@@ -4,9 +4,9 @@ import re
 
 # Absolute Paths
 umls_parquet = r'F:\Din\Study\Education\Projects\Thesis\data\UML\MRCONSO_optimized.parquet'
-diag_csv = r'd:\Study\Education\Projects\Thesis\data\viettel\combine\diagnosis_10.csv'
-proc_csv = r'd:\Study\Education\Projects\Thesis\data\viettel\combine\procedure_9.csv'
-output_dir = r'd:\Study\Education\Projects\Thesis\data\viettel\combine\custom_umls_vietnamese'
+diag_csv = r'data\viettel\combine\diagnosis_10.csv'
+proc_csv = r'data\viettel\combine\procedure_9.csv'
+output_dir = r'data\viettel\combine\custom_umls_vietnamese'
 
 os.makedirs(output_dir, exist_ok=True)
 mrconso_path = os.path.join(output_dir, 'MRCONSO.RRF')

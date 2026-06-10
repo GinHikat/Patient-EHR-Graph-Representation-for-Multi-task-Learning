@@ -15,7 +15,7 @@ def clean_text(text):
     return text
 
 def build_training_dataset():
-    base_dir = r"d:\Study\Education\Projects\Thesis\data\viettel\vietnamese_ner"
+    base_dir = r"data\viettel\vietnamese_ner"
     qwen_dataset_path = os.path.join(base_dir, "qwen_dataset.jsonl")
     train_split_path = os.path.join(base_dir, "training", "vietnamese", "document_classification", "doc_class_train.jsonl")
     mapped_entities_path = os.path.join(base_dir, "ground_truth_vn_entity.csv")

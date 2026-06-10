@@ -38,7 +38,7 @@ SEMTYPE_MAPPING = {
 }
 
 def evaluate_quickumls():
-    benchmark_path = r"d:\Study\Education\Projects\Thesis\data\viettel\vietnamese_ner\gold_standard_benchmark.jsonl"
+    benchmark_path = r"data\viettel\vietnamese_ner\gold_standard_benchmark.jsonl"
     
     # Global tracking for TP, FP, FN
     metrics = {

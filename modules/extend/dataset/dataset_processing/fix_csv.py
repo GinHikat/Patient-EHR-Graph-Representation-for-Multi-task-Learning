@@ -1,6 +1,6 @@
 import re
 
-file_path = r'd:\Study\Education\Projects\Thesis\data\viettel\vietnamese_ner\mapped_entities.csv'
+file_path = r'data\viettel\vietnamese_ner\mapped_entities.csv'
 
 lines = []
 with open(file_path, 'r', encoding='utf-8-sig') as f:

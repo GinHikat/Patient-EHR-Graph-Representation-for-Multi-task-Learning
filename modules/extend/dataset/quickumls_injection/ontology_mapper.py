@@ -13,7 +13,7 @@ if project_root not in sys.path:
 from modules.dataset_preprocessing.external.uml import spacy_quickumls
 
 def map_entities():
-    base_dir = r"d:\Study\Education\Projects\Thesis\data\viettel\vietnamese_ner"
+    base_dir = r"data\viettel\vietnamese_ner"
     input_csv = os.path.join(base_dir, "aggregated_entities.csv")
     output_csv = os.path.join(base_dir, "mapped_entities.csv")
     
@@ -32,8 +32,8 @@ def map_entities():
     write_header = not os.path.exists(output_csv)
     
     # Build direct fallback dictionaries to catch short words (like "ho") that QuickUMLS ignores
-    diag_csv = r"d:\Study\Education\Projects\Thesis\data\viettel\combine\diagnosis_10.csv"
-    proc_csv = r"d:\Study\Education\Projects\Thesis\data\viettel\combine\procedure_9.csv"
+    diag_csv = r"data\viettel\combine\diagnosis_10.csv"
+    proc_csv = r"data\viettel\combine\procedure_9.csv"
     diag_df = pd.read_csv(diag_csv, dtype=str)
     proc_df = pd.read_csv(proc_csv, dtype=str)
     

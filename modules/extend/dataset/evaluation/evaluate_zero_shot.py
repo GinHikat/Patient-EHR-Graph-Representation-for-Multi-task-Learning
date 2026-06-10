@@ -98,7 +98,7 @@ def evaluate_threshold(df, name):
     return pd.DataFrame([best_metrics])
 
 def main():
-    dataset_path = r"d:\Study\Education\Projects\Thesis\data\viettel\combine\icd_pairwise_dataset.csv"
+    dataset_path = r"data\viettel\combine\icd_pairwise_dataset.csv"
     if not os.path.exists(dataset_path):
         print(f"Dataset not found at {dataset_path}")
         return
@@ -112,7 +112,10 @@ def main():
         "cambridgeltl/SapBERT-UMLS-2020AB-all-lang-from-XLMR", # Multilingual SapBERT (The Gold Standard)
         "democratized-nlp/vihealthbert",                       # Vietnamese Medical BERT
         "vinai/phobert-base",                                  # General Vietnamese BERT
-        "BAAI/bge-m3"                                          # State of the art general multilingual embedding
+        "BAAI/bge-m3",                                         # State of the art general multilingual embedding
+        "AITeamVN/Vietnamese_Embedding",                       # SOTA Vietnamese embedding (BGE-M3 fine-tuned)
+        "bkai-foundation-models/vietnamese-bi-encoder",        # Top Vietnamese semantic search encoder
+        "keepitreal/vietnamese-sbert"                          # Vietnamese SBERT
     ]
     
     all_results = []
@@ -144,7 +147,7 @@ def main():
         print("\n\nFINAL ZERO-SHOT COMPARISON:")
         print(final_df.to_string(index=False))
         
-        output_csv = r"d:\Study\Education\Projects\Thesis\data\viettel\combine\zero_shot_evaluation_results.csv"
+        output_csv = r"data\viettel\combine\zero_shot_evaluation_results.csv"
         final_df.to_csv(output_csv, index=False)
         print(f"\nSaved final metrics to: {output_csv}")
 

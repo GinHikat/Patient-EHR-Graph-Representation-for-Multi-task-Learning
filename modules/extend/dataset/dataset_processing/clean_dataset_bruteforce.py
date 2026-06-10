@@ -21,7 +21,7 @@ def clean_text(text):
     return text
 
 def clean_dataset_bruteforce():
-    base_dir = r"d:\Study\Education\Projects\Thesis\data\viettel\vietnamese_ner"
+    base_dir = r"data\viettel\vietnamese_ner"
     # We will use the already partially cleaned one since the original was removed.
     input_jsonl = os.path.join(base_dir, "qwen_dataset.jsonl")
     output_jsonl = os.path.join(base_dir, "cleaned_qwen_dataset.jsonl")

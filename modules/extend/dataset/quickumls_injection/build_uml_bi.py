@@ -9,8 +9,8 @@ original_uml_dir = r'F:\Din\Study\Education\Projects\Thesis\data\UML'
 new_uml_bi_dir = r'F:\Din\Study\Education\Projects\Thesis\data\UML_bi'
 
 umls_parquet = os.path.join(original_uml_dir, 'MRCONSO_optimized.parquet')
-diag_csv = r'd:\Study\Education\Projects\Thesis\data\viettel\combine\diagnosis_10.csv'
-proc_csv = r'd:\Study\Education\Projects\Thesis\data\viettel\combine\procedure_9.csv'
+diag_csv = r'data\viettel\combine\diagnosis_10.csv'
+proc_csv = r'data\viettel\combine\procedure_9.csv'
 
 def copy_with_progress(src, dst):
     """Copies a massive file and prints progress based on file size."""

@@ -6,7 +6,7 @@ import os
 sys.stdout.reconfigure(encoding='utf-8')
 
 def build_dataset():
-    csv_path = r"d:\Study\Education\Projects\Thesis\data\viettel\combine\diagnosis_10.csv"
+    csv_path = r"data\viettel\combine\diagnosis_10.csv"
     if not os.path.exists(csv_path):
         print(f"Error: {csv_path} not found.")
         return
@@ -85,7 +85,7 @@ def build_dataset():
     
     df_out = pd.DataFrame(dataset)
     
-    out_path = r"d:\Study\Education\Projects\Thesis\data\viettel\combine\icd_pairwise_dataset.csv"
+    out_path = r"data\viettel\combine\icd_pairwise_dataset.csv"
     df_out.to_csv(out_path, index=False, encoding='utf-8-sig')
     
     print("="*50)

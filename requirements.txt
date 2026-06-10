@@ -1,14 +1,14 @@
+--extra-index-url https://download.pytorch.org/whl/rocm6.2
+torch
+torchvision
+torchaudio
 pandas 
 numpy
 matplotlib
-seaborn
-neo4j
-fastapi
-python-dotenv
-scispacy
-spacy
-quickumls
+transformers<4.47.0
+scikit-learn
 datasets 
 accelerate
 peft
 trl
+sentencepiece

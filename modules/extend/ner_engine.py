@@ -384,3 +384,217 @@ def extract_entities_dl(text: str, threshold: float = 0.5) -> dict:
         "sentences": [text],
         "entities": entities
     }
+
+_ner_extractors = {}
+_sapbert_embedder = None
+_base_df_cache = None
+_drug_mapping_cache = None
+
+SEMTYPE_MAPPING = {
+    # Disease / Symptom
+    "Disease or Syndrome": "Disease/Symptom",
+    "Sign or Symptom": "Disease/Symptom",
+    "Pathologic Function": "Disease/Symptom",
+    "Neoplastic Process": "Disease/Symptom",
+    "Mental or Behavioral Dysfunction": "Disease/Symptom",
+    "Finding": "Disease/Symptom",
+    
+    # Procedure / Treatment
+    "Therapeutic or Preventive Procedure": "Procedure/Treatment",
+    "Diagnostic Procedure": "Procedure/Treatment",
+    "Health Care Activity": "Procedure/Treatment",
+    "Laboratory Procedure": "Procedure/Treatment",
+    "Medical Device": "Procedure/Treatment",
+    
+    # Drug
+    "Pharmacologic Substance": "Drug",
+    "Organic Chemical": "Drug",
+    "Clinical Drug": "Drug",
+    "Antibiotic": "Drug",
+    "Biomedical or Dental Material": "Drug",
+    "Amino Acid, Peptide, or Protein": "Drug",
+    "Biologically Active Substance": "Drug",
+    "Immunologic Factor": "Drug",
+    "Indicator, Reagent, or Diagnostic Aid": "Drug",
+    "Nucleic Acid, Nucleoside, or Nucleotide": "Drug",
+    "Vitamin": "Drug"
+}
+
+umls_to_three_classes = {
+    "Clinical Attribute": "Disease/Symptom",
+    "Disease or Syndrome": "Disease/Symptom",
+    "Finding": "Disease/Symptom",
+    "Injury or Poisoning": "Disease/Symptom",
+    "Mental or Behavioral Dysfunction": "Disease/Symptom",
+    "Neoplastic Process": "Disease/Symptom",
+    "Pathologic Function": "Disease/Symptom",
+    "Physiologic Function": "Disease/Symptom",
+    "Sign or Symptom": "Disease/Symptom",
+    "Amino Acid, Peptide, or Protein": "Drug",
+    "Biologically Active Substance": "Drug",
+    "Clinical Drug": "Drug",
+    "Immunologic Factor": "Drug",
+    "Indicator, Reagent, or Diagnostic Aid": "Drug",
+    "Nucleic Acid, Nucleoside, or Nucleotide": "Drug",
+    "Organic Chemical": "Drug",
+    "Pharmacologic Substance": "Drug",
+    "Vitamin": "Drug",
+    "Diagnostic Procedure": "Procedure/Treatment",
+    "Health Care Activity": "Procedure/Treatment",
+    "Laboratory Procedure": "Procedure/Treatment",
+    "Laboratory or Test Result": "Procedure/Treatment",
+    "Medical Device": "Procedure/Treatment",
+    "Therapeutic or Preventive Procedure": "Procedure/Treatment",
+}
+
+def extract_entities_ner(text: str, model_name: str = "vihealthbert") -> dict:
+    """
+    Extract entities using fine-tuned Vietnamese NER and map to UMLS CUI via SapBERT.
+    Compatible with Numpy 1.x by parsing the stringified CSV instead of pickle.
+    """
+    global _ner_extractors, _sapbert_embedder, _base_df_cache, _drug_mapping_cache
+    import sys
+    import os
+    import numpy as np
+    import pandas as pd
+    import ast
+    from sklearn.metrics.pairwise import cosine_similarity
+    from modules.extend.training.inference_ner import NER
+    from modules.models.models import EmbeddingModels
+
+    if model_name not in _ner_extractors:
+        print(f"Loading NER model {model_name}...")
+        _ner_extractors[model_name] = NER(model_name)
+    
+    if _sapbert_embedder is None:
+        print("Loading SapBERT model...")
+        _sapbert_embedder = EmbeddingModels(model_choice="cambridgeltl/SapBERT-UMLS-2020AB-all-lang-from-XLMR")
+        
+    if _base_df_cache is None:
+        print("Loading base CSV embeddings...")
+        # map_path = os.path.join(project_root, "data", "viettel", "mapping", "mapped_entities_embedded.parquet")
+        map_path = os.path.join(project_root, "data", "viettel", "mapping", "mapped_entities_embedded.csv")
+        try:
+            df = pd.read_csv(map_path)
+            # df = df.dropna(subset=['mapped_cui']).reset_index(drop=True)
+            
+            import re
+            def parse_emb(x):
+                # Bulletproof regex extraction: regardless of if Parquet saved it as a string,
+                # an array containing a string, or a byte string, this will find all the floats.
+                floats = re.findall(r'-?\d+\.\d+(?:e-?\d+)?', str(x))
+                return np.array([float(f) for f in floats], dtype=np.float32)
+            
+            df['embedding'] = df['embedding'].apply(parse_emb)
+            
+            # As we discovered, original_type is much more trustworthy than mapped_type
+            df['macro_type'] = df['original_type']
+            
+            _base_df_cache = df
+        except Exception as e:
+            print(f"Error loading CSV base entities: {e}")
+            _base_df_cache = pd.DataFrame()
+
+    if _drug_mapping_cache is None:
+        print("Loading drug mapping parquet...")
+        drug_path = os.path.join(project_root, "data", "viettel", "mapping", "drug_mapping.parquet")
+        try:
+            _drug_mapping_cache = pd.read_parquet(drug_path)
+        except Exception as e:
+            print(f"Error loading drug mapping: {e}")
+            _drug_mapping_cache = pd.DataFrame()
+
+    base_df = _base_df_cache
+    drug_mapping_df = _drug_mapping_cache
+    
+    ner_results = _ner_extractors[model_name].extract_entities(text)
+    
+    entities = []
+    THRESHOLD = 0.8
+    
+    if not ner_results:
+        return {"original_text": text, "sentences": [text], "entities": []}
+        
+    extracted_texts = [ent["term"] for ent in ner_results]
+    extracted_embeddings = _sapbert_embedder.encode_text(extracted_texts, batch_size=32, show_progress=False)
+    
+    cat_map = {
+        "Disease/Symptom": "Disease",
+        "Procedure/Treatment": "Procedures",
+        "Drug": "Drugs"
+    }
+    
+    for idx, ent in enumerate(ner_results):
+        term = ent["term"]
+        label = ent["label"]
+        offset = ent["offset"]
+        
+        start = offset[0] if offset and offset[0] is not None else 0
+        end = offset[1] if offset and offset[1] is not None else text.find(term) + len(term)
+        if start == 0 and end == text.find(term) + len(term):
+            start = text.find(term)
+        
+        emb = extracted_embeddings[idx:idx+1]
+        
+        mapped_cat = cat_map.get(label, "Other")
+        # Use macro_type mapped from the granular mapped_type dictionary
+        mask = base_df['macro_type'] == label
+        
+        cui = f"C_{label.upper().replace('/', '_')}"
+        similarity = 1.0
+        canonical_name = term
+        
+        if mask.any():
+            type_df = base_df[mask]
+            type_embeddings = np.vstack(type_df['embedding'].values)
+            sims = cosine_similarity(emb, type_embeddings)[0]
+            max_idx = np.argmax(sims)
+            max_sim = sims[max_idx]
+            
+            print(f"DEBUG: Term='{term}', MaxSim={max_sim}, Matched='{type_df.iloc[max_idx]['entity']}', MappedCUI='{type_df.iloc[max_idx]['mapped_cui']}'")
+            
+            if max_sim > THRESHOLD:
+                cui_val = type_df.iloc[max_idx]['mapped_cui']
+                if pd.notna(cui_val) and cui_val != "":
+                    cui = str(cui_val)
+                    similarity = float(max_sim)
+                    # Update the canonical name to the retrieved standardized entity
+                    canonical_name = str(type_df.iloc[max_idx]['entity'])
+                    
+        # DRUG FALLBACK LOGIC
+        codes = get_cui_vocab_codes(cui) if cui.startswith("C") and not cui.startswith("C_") else {}
+        if label == "Drug" and cui == "C_DRUG" and not drug_mapping_df.empty:
+            search_term = term.title()
+            matched_row = drug_mapping_df[drug_mapping_df['name'] == search_term]
+            
+            if not matched_row.empty:
+                row = matched_row.iloc[0]
+                if 'db_id' in row and pd.notna(row['db_id']) and str(row['db_id']).strip() and str(row['db_id']).strip() != "None":
+                    codes['drugbank'] = str(row['db_id'])
+                if 'pubchem_id' in row and pd.notna(row['pubchem_id']) and str(row['pubchem_id']).strip() and str(row['pubchem_id']).strip() != "None":
+                    codes['pubchem'] = str(row['pubchem_id'])
+                if 'mesh_id' in row and pd.notna(row['mesh_id']) and str(row['mesh_id']).strip() and str(row['mesh_id']).strip() != "None":
+                    codes['mesh'] = str(row['mesh_id'])
+                
+                if codes:
+                    canonical_name = search_term
+                    similarity = 1.0
+                    print(f"DEBUG: Drug Fallback matched '{term}' to {codes} via drug_mapping.parquet")
+        
+        entities.append({
+            "start": start,
+            "end": end,
+            "text": term,
+            "canonical_name": canonical_name,
+            "cui": cui,
+            "similarity": similarity,
+            "type": label,
+            "category": mapped_cat,
+            "codes": codes
+        })
+        
+    return {
+        "original_text": text,
+        "sentences": [text],
+        "entities": entities
+    }
