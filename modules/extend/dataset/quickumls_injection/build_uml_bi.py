@@ -3,10 +3,14 @@ import os
 import re
 import shutil
 import time
+import dotenv
+dotenv.load_dotenv()
+
+data_dir = os.getenv('DATA_DIR')
 
 # Paths
-original_uml_dir = r'F:\Din\Study\Education\Projects\Thesis\data\UML'
-new_uml_bi_dir = r'F:\Din\Study\Education\Projects\Thesis\data\UML_bi'
+original_uml_dir = os.path.join(data_dir, 'UML')
+new_uml_bi_dir = os.path.join(data_dir, 'UML_bi')
 
 umls_parquet = os.path.join(original_uml_dir, 'MRCONSO_optimized.parquet')
 diag_csv = r'data\viettel\combine\diagnosis_10.csv'

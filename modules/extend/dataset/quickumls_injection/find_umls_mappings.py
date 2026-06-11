@@ -1,9 +1,13 @@
 import pandas as pd
 import os
 from tqdm import tqdm
+import dotenv
+dotenv.load_dotenv()
+
+data_dir = os.getenv('DATA_DIR')
 
 # Absolute Paths
-umls_parquet = r'F:\Din\Study\Education\Projects\Thesis\data\UML\MRCONSO_optimized.parquet'
+umls_parquet = os.path.join(data_dir, 'UML', 'MRCONSO_optimized.parquet')
 diag_csv = r'data\viettel\combine\diagnosis_10.csv'
 proc_csv = r'data\viettel\combine\procedure_9.csv'
 output_txt = r'data\viettel\combine\umls_match_report.txt'

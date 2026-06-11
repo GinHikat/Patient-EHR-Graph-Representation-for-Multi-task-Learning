@@ -16,7 +16,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from modules.models.models import EmbeddingModels
 
 import argparse
-from modules.extend.training.inference_ner import NER
+from modules.extend.model.inference_ner import NER
 
 def main():
     parser = argparse.ArgumentParser(description="End-to-End Evaluation against Gold Standard SapBERT CUIs")
@@ -55,8 +55,9 @@ def main():
     sapbert_model_name = "cambridgeltl/SapBERT-UMLS-2020AB-all-lang-from-XLMR"
     embedder = EmbeddingModels(model_choice=sapbert_model_name)
     
-    # Load Base Entities DataFrame
-    base_df = pd.read_pickle("data/viettel/vietnamese_ner/mapped_entities_embedded.pkl")
+    # Load mapped entities with their SapBERT embeddings for quick cosine similarity matching
+    print("Loading pre-computed SapBERT embeddings database...")
+    base_df = pd.read_pickle("data/viettel/mapping/mapped_entities_embedded.pkl")
     # We only care about rows that have a valid CUI
     base_df = base_df.dropna(subset=['mapped_cui']).reset_index(drop=True)
     base_embeddings = np.vstack(base_df['embedding'].values)
@@ -105,10 +106,8 @@ def main():
         "Therapeutic or Preventive Procedure": "Procedure/Treatment",
     }
     
-    # Pre-map base_df to the 3 classes to speed up filtering
     base_df['macro_type'] = base_df['mapped_type'].map(umls_to_three_classes)
     
-    # Read the dataset
     with open(input_file, "r", encoding="utf-8") as f:
         lines = f.readlines()
         
@@ -121,6 +120,7 @@ def main():
         "Drug": {"tp": 0, "fp": 0, "fn": 0}
     }
     
+    # System prompt if using Qwen for NER
     system_prompt = (
         "You are an expert clinical annotator. Your task is to extract medical entities from Vietnamese clinical text.\n"
         "The entity types to extract are STRICTLY limited to the following three:\n"
@@ -141,11 +141,11 @@ def main():
     
     results = []
     
-    # Iterate through all data
     for line in tqdm(lines, desc="Extracting Entities"):
         data = json.loads(line)
         text = data.get("text", "")
         
+        # Extract entities using Qwen
         if args.extractor == "qwen":
             prompt = [
                 {"role": "system", "content": system_prompt},

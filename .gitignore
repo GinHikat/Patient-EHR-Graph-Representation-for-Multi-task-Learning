@@ -25,6 +25,8 @@ modules/models/.models/*
 
 Clinical-Note-Extraction/
 
+modules/extend/model/statedict/*
+
 .gitnexus
 *.vscode 
 Note/
@@ -32,5 +34,4 @@ Note/
 AGENTS.md
 CLAUDE.md
 
-Thesis/
-Paper/
+Report/

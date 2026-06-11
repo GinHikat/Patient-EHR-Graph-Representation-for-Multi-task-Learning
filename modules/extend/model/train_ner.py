@@ -154,13 +154,13 @@ def main():
         weight_decay=0.01,
         load_best_model_at_end=True,
         metric_for_best_model="f1",
-        logging_strategy="epoch",   # Log only once per epoch to avoid spam
-        disable_tqdm=True,          # COMPLETELY disable tqdm to prevent Papermill from inflating the notebook size to Gigabytes
+        logging_strategy="epoch",   
+        disable_tqdm=True,          
         save_total_limit=1,         # ONLY keep the single best checkpoint on disk, delete the rest!
         push_to_hub=False,
         report_to="none",
-        fp16=True,                  # T4 GPUs support Mixed Precision, this doubles training speed
-        dataloader_num_workers=2,   # Parallelize data loading on Kaggle CPUs
+        fp16=True,                 
+        dataloader_num_workers=2,  
     )
     
     trainer = Trainer(

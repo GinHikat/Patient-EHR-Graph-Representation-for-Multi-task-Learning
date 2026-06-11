@@ -9,11 +9,6 @@ from transformers import (
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from trl import SFTTrainer, DataCollatorForCompletionOnlyLM
 
-# --- Configuration ---
-# Since you are using an AMD ROCm GPU with massive VRAM (like an MI210 with 64GB), 
-# we DO NOT need to use buggy 4-bit quantization (bitsandbytes). 
-# We can load the model in native bfloat16, which is incredibly fast and stable on AMD.
-
 MODEL_NAME = "Qwen/Qwen2.5-7B-Instruct"
 TRAIN_DATA = "doc_class_train.jsonl"
 EVAL_DATA = "doc_class_test.jsonl"
@@ -25,7 +20,6 @@ def format_chat_template(example, tokenizer):
     format into the raw string format using Qwen's official chat template.
     """
     # Assuming your JSONL has a "messages" key. If your JSONL is formatted as a flat list of dicts,
-    # adjust the data loading below. Based on your previous snippet:
     # {"messages": [{"role": "user", "content": "text"}, {"role": "assistant", "content": "[]"}]}
     
     # Apply the chat template
@@ -74,18 +68,18 @@ def main():
     training_args = TrainingArguments(
         output_dir=OUTPUT_DIR,
         per_device_train_batch_size=4,
-        gradient_accumulation_steps=4,      # Effective batch size = 16
-        optim="adamw_torch",                # Standard optimizer
+        gradient_accumulation_steps=4,      
+        optim="adamw_torch",                
         learning_rate=2e-4,
         lr_scheduler_type="cosine",
         num_train_epochs=3,           
         logging_steps=10,
-        eval_strategy="epoch",              # Evaluate at the end of every epoch
+        eval_strategy="epoch",
         save_strategy="epoch",
-        bf16=True,                          # for AMD ROCm
+        bf16=True,                         
         max_grad_norm=1.0,
         warmup_ratio=0.1,
-        report_to="none"                    # Set to "wandb" if use Weights & Biases
+        report_to="none"                 
     )
 
     response_template = "<|im_start|>assistant\n"
@@ -98,7 +92,7 @@ def main():
         eval_dataset=dataset["test"],
         peft_config=peft_config,
         dataset_text_field="text",
-        max_seq_length=512,                 # Clinical sentences are short, 512 is plenty
+        max_seq_length=512,                     
         tokenizer=tokenizer,
         args=training_args,
         data_collator=collator,

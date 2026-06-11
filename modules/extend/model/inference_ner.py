@@ -6,7 +6,7 @@ from transformers import AutoTokenizer, AutoModelForTokenClassification, pipelin
 TOKENIZER_MAP = {
     "vihealthbert": "vihealthbert",
     "vipubmed-deberta": "vipubmed-deberta-base",
-    "phobert": "vinai/phobert-base-v2",
+    "phobert": "phobert",
     "xlm-roberta": "xlm-roberta-base"
 }
 
@@ -37,7 +37,7 @@ class NER:
             if not os.path.exists(model_path):
                 raise FileNotFoundError(f"Model weights not found at: {model_path}")
 
-            # Load Tokenizer AND Model directly from the local folder
+            # Load Tokenizer & Model from the local folder
             tokenizer = AutoTokenizer.from_pretrained(model_path)
             id2label = {i: label for i, label in enumerate(LABEL_LIST)}
             label2id = {label: i for i, label in enumerate(LABEL_LIST)}
@@ -74,9 +74,6 @@ class NER:
             
             term = entity['word'].strip()
             
-            # Manually calculate the exact character offset since the Slow Tokenizer cannot.
-            # We search forward from the last found position to perfectly handle 
-            # cases where the same word appears multiple times in the sentence!
             start_idx = text.find(term, current_search_idx)
             
             if start_idx != -1:

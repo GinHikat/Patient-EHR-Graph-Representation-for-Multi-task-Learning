@@ -12,7 +12,6 @@ if project_root not in sys.path:
 
 from modules.dataset_preprocessing.external.uml import spacy_quickumls
 
-# Mapping UMLS Semantic Types to our 3 Macro Classes
 SEMTYPE_MAPPING = {
     # Disease / Symptom
     "Disease or Syndrome": "Disease/Symptom",
@@ -77,7 +76,6 @@ def evaluate_quickumls():
         # Clean text exactly as QuickUMLS expects (NFC normalization)
         clean_text = unicodedata.normalize('NFC', text)
         
-        # Run QuickUMLS!
         df_results = spacy_quickumls(clean_text)
         
         if not df_results.empty:
@@ -91,7 +89,7 @@ def evaluate_quickumls():
                 umls_type = row['type']
                 cui = row['cui']
                 
-                # Map the UMLS semantic type to our 3 classes
+                # Map the UMLS semantic type to 3 classes
                 macro_class = SEMTYPE_MAPPING.get(umls_type)
                 
                 if macro_class:
