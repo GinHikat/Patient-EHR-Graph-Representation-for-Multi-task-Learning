@@ -1,14 +1,14 @@
 import pandas as pd
+import argparse
 import requests
 import os
 import random
 import difflib
 from tqdm import tqdm
 
-DIAGNOSIS_PATH = "../VN-Clinical-Text/diagnosis_10.csv" 
-INPUT_TERMS_PATH = "../VN-Clinical-Text/external_kg.parquet" 
-ENTITIES_PATH = "../VN-Clinical-Text/aggregated_entities.csv"
-OUTPUT_FILE = "translated_silver_standard.csv"
+DIAGNOSIS_PATH = "../VN-Clinical-Text/trans/diagnosis_10.csv" 
+INPUT_TERMS_PATH = "../VN-Clinical-Text/trans/translated_qwen72b.csv" 
+ENTITIES_PATH = "../VN-Clinical-Text/trans/aggregated_entities.csv"
 
 # Load diagnosis dictionary for few-shot examples
 print("Loading diagnosis dictionary for few-shot examples...")
@@ -33,7 +33,7 @@ except FileNotFoundError:
     print(f"Warning: Could not find {ENTITIES_PATH}. Entity matching will be disabled.")
     valid_entities = []
 
-def translate_with_llm(target_term: str, num_shots: int = 0) -> str:
+def translate_with_llm(target_term: str, num_shots: int = 10) -> str:
     """
     Calls your local vLLM server to translate a single term from English to Vietnamese.dd
     Uses zero-shot or few-shot depending on available data.
@@ -84,13 +84,14 @@ def translate_with_llm(target_term: str, num_shots: int = 0) -> str:
         {"role": "user", "content": user_prompt}
     ]
   
-    # Call the Local vLLM Server (OpenAI Compatible)
+    # Call the Local vLLM Server
     url = "http://localhost:8080/v1/chat/completions"
     payload = {
-        "model": "Qwen/Qwen2.5-72B-Instruct",
+        "model": "google/medgemma-27b-it",
         "messages": messages,
         "stream": False,
-        "temperature": 0.0, # Strict mode
+        "temperature": 0.0, # Strict mode,
+        'max_tokens': 100,
         "response_format": {"type": "json_object"}
     }
   
@@ -122,38 +123,75 @@ def translate_with_llm(target_term: str, num_shots: int = 0) -> str:
         return ""
 
 def main():
-    # Load the terms to translate
-    try:
-        df_terms = pd.read_parquet(INPUT_TERMS_PATH)
-    except FileNotFoundError:
-        print(f"Error: Could not find {INPUT_TERMS_PATH}. Please provide the file with terms to translate.")
-        return
+    parser = argparse.ArgumentParser(description="Translate medical terms.")
+    parser.add_argument("--mode", choices=["continue", "fresh"], default="continue",
+                        help="Choose 'continue' to stream translations into an existing file or 'fresh' to start from the parquet file and append to a new CSV.")
+    args = parser.parse_args()
 
-    # Check if we already started processing so we don't start from 0
-    if os.path.exists(OUTPUT_FILE):
-        processed_df = pd.read_csv(OUTPUT_FILE)
-        start_index = len(processed_df)
-        print(f"Resuming from index {start_index}...")
-    else:
-        start_index = 0
-        # Create empty file with headers
-        pd.DataFrame(columns=["english_term", "vietnamese_translation"]).to_csv(OUTPUT_FILE, index=False)
-
-    term_column = "name"
-    if term_column not in df_terms.columns:
-        print(f"Error: Column '{term_column}' not found in {INPUT_TERMS_PATH}")
-        return
-
-    if start_index >= len(df_terms):
-        print("All terms have been translated!")
-        return
-
-    terms_to_translate = df_terms.iloc[start_index:][term_column].tolist()
-    if 'labels' in df_terms.columns:
-        labels_list = df_terms.iloc[start_index:]['labels'].tolist()
-    else:
-        labels_list = [""] * len(terms_to_translate)
+    if args.mode == "fresh":
+        input_path = "../VN-Clinical-Text/external_kg.parquet"
+        output_path = "../VN-Clinical-Text/trans/translated_medgemma27b.csv"
         
+        try:
+            df_terms = pd.read_parquet(input_path)
+        except FileNotFoundError:
+            print(f"Error: Could not find {input_path}. Please provide the file with terms to translate.")
+            return
+            
+        if os.path.exists(output_path):
+            processed_df = pd.read_csv(output_path)
+            start_index = len(processed_df)
+            print(f"Resuming fresh mode from index {start_index}...")
+        else:
+            start_index = 0
+            pd.DataFrame(columns=["english_term", "vietnamese_translation"]).to_csv(output_path, index=False)
+            
+        term_column = "name"
+        if term_column not in df_terms.columns:
+            print(f"Error: Column '{term_column}' not found in {input_path}")
+            return
+            
+        if start_index >= len(df_terms):
+            print("All terms have been translated!")
+            return
+            
+        terms_to_translate = df_terms.iloc[start_index:][term_column].tolist()
+        if 'labels' in df_terms.columns:
+            labels_list = df_terms.iloc[start_index:]['labels'].tolist()
+        else:
+            labels_list = [""] * len(terms_to_translate)
+            
+    else:
+        # Continue mode
+        input_path = "../VN-Clinical-Text/trans/translated_qwen72b.csv"
+        try:
+            df_terms = pd.read_csv(input_path)
+        except FileNotFoundError:
+            print(f"Error: Could not find {input_path}")
+            return
+            
+        if "medgemma_trans" not in df_terms.columns:
+            df_terms["medgemma_trans"] = ""
+            
+        missing_mask = df_terms["medgemma_trans"].isna() | (df_terms["medgemma_trans"] == "")
+        if not missing_mask.any():
+            print("All terms have been translated!")
+            return
+            
+        indices_to_process = df_terms[missing_mask].index.tolist()
+        terms_to_translate = df_terms.loc[indices_to_process, "english_term"].tolist()
+        
+        # Load labels from parquet so we can skip "Drug" in continue mode
+        try:
+            df_kg = pd.read_parquet("../VN-Clinical-Text/external_kg.parquet")
+            if 'name' in df_kg.columns and 'labels' in df_kg.columns:
+                label_mapping = dict(zip(df_kg['name'], df_kg['labels']))
+                labels_list = [label_mapping.get(term, "") for term in terms_to_translate]
+            else:
+                labels_list = [""] * len(terms_to_translate)
+        except Exception:
+            labels_list = [""] * len(terms_to_translate)
+
     print(f"Translating {len(terms_to_translate)} remaining terms using high-concurrency batching...")
     
     import sys
@@ -176,19 +214,30 @@ def main():
             chunk_terms = terms_to_translate[i : i + CHUNK_SIZE]
             chunk_labels = labels_list[i : i + CHUNK_SIZE]
             
+            if args.mode == "continue":
+                chunk_indices = indices_to_process[i : i + CHUNK_SIZE]
+            
             # executor.map automatically maintains the order of the inputs
             chunk_results = list(executor.map(process_term, chunk_terms, chunk_labels))
             
-            # Combine into rows
-            rows = []
-            for en_term, vi_term in zip(chunk_terms, chunk_results):
-                rows.append({
-                    "english_term": en_term,
-                    "vietnamese_translation": vi_term
-                })
-                
-            # Save the chunk to CSV immediately
-            pd.DataFrame(rows).to_csv(OUTPUT_FILE, mode='a', header=False, index=False)
+            if args.mode == "fresh":
+                # Combine into rows
+                rows = []
+                for en_term, vi_term in zip(chunk_terms, chunk_results):
+                    rows.append({
+                        "english_term": en_term,
+                        "vietnamese_translation": vi_term
+                    })
+                # Save the chunk to CSV immediately
+                pd.DataFrame(rows).to_csv(output_path, mode='a', header=False, index=False)
+            else:
+                # Update dataframe
+                df_terms.loc[chunk_indices, "medgemma_trans"] = chunk_results
+                # Save the chunk to CSV safely by writing to a temp file and replacing
+                temp_file = input_path + ".tmp"
+                df_terms.to_csv(temp_file, index=False)
+                os.replace(temp_file, input_path)
+            
             pbar.update(len(chunk_terms))
             
         pbar.close()
