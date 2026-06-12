@@ -348,42 +348,174 @@ def extract_entities_llm(text: str) -> dict:
 
 _dl_extractor = None
 
-def extract_entities_dl(text: str, threshold: float = 0.5) -> dict:
+_plmicd_model = None
+_mlb_classes = None
+_vihealthbert_tokenizer = None
+_external_kg_cache = None
+
+def extract_entities_dl(text: str, threshold: float = 0.5, model_length: str = "long") -> dict:
     """
-    Extract diagnosis categories using ProcDiagExtractor.
+    Extract diagnosis categories using ProcDiagExtractor (long) or PLMICDModel (short).
     """
-    global _dl_extractor
+    global _dl_extractor, _plmicd_model, _mlb_classes, _vihealthbert_tokenizer, _external_kg_cache
     
-    from modules.models.extractor import ProcDiagExtractor, diagnosis_dict, diagnosis_icd_dict
-    
-    if _dl_extractor is None:
-        _dl_extractor = ProcDiagExtractor("statedict_900_202")
+    if model_length == "long":
+        from modules.models.extractor import ProcDiagExtractor, diagnosis_dict, diagnosis_icd_dict
         
-    predictions = _dl_extractor.predict(text, threshold=threshold)
-    
-    entities = []
-    for desc, prob in predictions.items():
-        ccsr_category = diagnosis_dict.get(desc, desc)
-        icd_codes = diagnosis_icd_dict.get(desc, "")
-        entities.append({
-            "start": 0,
-            "end": len(text),
-            "text": text,
-            "canonical_name": desc,
-            "cui": ccsr_category,
-            "similarity": float(prob),
-            "type": "Diagnosis",
-            "category": "Diagnosis",
-            "codes": {
-                "icd10": icd_codes
-            }
-        })
+        if _dl_extractor is None:
+            _dl_extractor = ProcDiagExtractor("statedict_900_202")
+            
+        predictions = _dl_extractor.predict(text, threshold=threshold)
         
-    return {
-        "original_text": text,
-        "sentences": [text],
-        "entities": entities
-    }
+        entities = []
+        for desc, prob in predictions.items():
+            ccsr_category = diagnosis_dict.get(desc, desc)
+            icd_codes = diagnosis_icd_dict.get(desc, "")
+            entities.append({
+                "start": 0,
+                "end": len(text),
+                "text": text,
+                "canonical_name": desc,
+                "cui": ccsr_category,
+                "similarity": float(prob),
+                "type": "Diagnosis",
+                "category": "Diagnosis",
+                "codes": {
+                    "icd10": icd_codes
+                }
+            })
+            
+        return {
+            "original_text": text,
+            "sentences": [text],
+            "entities": entities
+        }
+    else:
+        # SHORT MODEL (vihealthbert Kaggle Output)
+        import torch
+        import json
+        import pandas as pd
+        from modules.extend.model.plmicd_model import PLMICDModel
+        from transformers import AutoTokenizer
+        from safetensors.torch import load_file
+        
+        model_dir = os.path.join(project_root, "modules", "extend", "training", "results", "final_model")
+        classes_file = os.path.join(project_root, "modules", "extend", "training", "results", "classes.json")
+        
+        if _mlb_classes is None:
+            with open(classes_file, "r", encoding="utf-8") as f:
+                _mlb_classes = json.load(f)
+                
+        if _external_kg_cache is None:
+            try:
+                ekg_path = os.path.join(project_root, "data", "viettel", "mapping", "external_kg.parquet")
+                df_ekg = pd.read_parquet(ekg_path)
+                # Include Diagnosis, Disease, and Phenotype to capture all condition-like entities
+                _external_kg_cache = df_ekg[df_ekg['labels'].isin(['Diagnosis', 'Disease', 'Phenotype'])]
+            except Exception as e:
+                print(f"Error loading external_kg.parquet: {e}")
+                _external_kg_cache = pd.DataFrame()
+                
+        if _plmicd_model is None:
+            _plmicd_model = PLMICDModel(num_labels=len(_mlb_classes), model_name="vihealthbert")
+            state_dict = load_file(os.path.join(model_dir, "model.safetensors"))
+            # Strip module. prefix if saved from DataParallel in Kaggle
+            state_dict = {k.replace("module.", ""): v for k, v in state_dict.items()}
+            _plmicd_model.load_state_dict(state_dict, strict=False)
+            _plmicd_model.eval()
+            
+        if _vihealthbert_tokenizer is None:
+            _vihealthbert_tokenizer = AutoTokenizer.from_pretrained(model_dir)
+            
+        encodings = _vihealthbert_tokenizer(text, padding="max_length", truncation=True, max_length=256, return_tensors="pt")
+        with torch.no_grad():
+            outputs = _plmicd_model(input_ids=encodings['input_ids'], attention_mask=encodings['attention_mask'])
+            probs = torch.sigmoid(outputs.logits).squeeze().numpy()
+            
+        entities = []
+        # Support case where probs is 0-d (single class) or 1-d
+        if probs.ndim == 0:
+            probs = [probs.item()]
+            
+        for idx, prob in enumerate(probs):
+            if prob >= threshold:
+                cui_class = _mlb_classes[idx]
+                codes = get_cui_vocab_codes(cui_class)
+                
+                # Default canonical name is the CUI itself
+                canonical_name = cui_class
+                
+                # Attempt to map the CUI to the Vietnamese term
+                if not _external_kg_cache.empty:
+                    match = _external_kg_cache[_external_kg_cache['uml_id'] == cui_class]
+                    if not match.empty:
+                        row = match.iloc[0]
+                        vn_name = row.get('medgemma_trans')
+                        if pd.isna(vn_name) or not vn_name:
+                            vn_name = row.get('qwen_trans')
+                        if pd.isna(vn_name) or not vn_name:
+                            vn_name = row.get('map_trans')
+                        if pd.isna(vn_name) or not vn_name:
+                            vn_name = row.get('name')
+                        
+                        if pd.notna(vn_name) and vn_name:
+                            canonical_name = str(vn_name)
+                            
+                # Fallback to English MRCONSO term if it's completely missing from external_kg
+                if canonical_name == cui_class:
+                    try:
+                        from modules.dataset_preprocessing.external.uml import get_uml
+                        df_uml = get_uml()
+                        if df_uml is not None and not df_uml.empty:
+                            match_uml = df_uml[df_uml['CUI'] == cui_class]
+                            if not match_uml.empty:
+                                canonical_name = match_uml.iloc[0]['STR']
+                    except Exception:
+                        pass
+                
+                # Lexical post-matching to highlight the entity if it actually appears in the text
+                start_idx = 0
+                end_idx = len(text)
+                extracted_text = text
+                
+                # We'll try to find any of the Vietnamese translations in the text
+                import re
+                potential_terms = [canonical_name]
+                if not _external_kg_cache.empty:
+                    match = _external_kg_cache[_external_kg_cache['uml_id'] == cui_class]
+                    if not match.empty:
+                        r = match.iloc[0]
+                        for c in ['medgemma_trans', 'qwen_trans', 'map_trans', 'name']:
+                            val = r.get(c)
+                            if pd.notna(val) and val:
+                                potential_terms.append(str(val))
+                                
+                for term in potential_terms:
+                    # Escape special regex chars but allow case-insensitive match
+                    match_obj = re.search(re.escape(term), text, re.IGNORECASE)
+                    if match_obj:
+                        start_idx = match_obj.start()
+                        end_idx = match_obj.end()
+                        extracted_text = text[start_idx:end_idx]
+                        break
+                
+                entities.append({
+                    "start": start_idx,
+                    "end": end_idx,
+                    "text": extracted_text,
+                    "canonical_name": canonical_name,
+                    "cui": cui_class,
+                    "similarity": float(prob),
+                    "type": "Diagnosis",
+                    "category": "Diagnosis",
+                    "codes": codes
+                })
+                
+        return {
+            "original_text": text,
+            "sentences": [text],
+            "entities": entities
+        }
 
 _ner_extractors = {}
 _sapbert_embedder = None
@@ -459,7 +591,7 @@ def extract_entities_ner(text: str, model_name: str = "vihealthbert") -> dict:
     import pandas as pd
     import ast
     from sklearn.metrics.pairwise import cosine_similarity
-    from modules.extend.training.inference_ner import NER
+    from modules.extend.model.inference_ner import NER
     from modules.models.models import EmbeddingModels
 
     if model_name not in _ner_extractors:

@@ -63,6 +63,7 @@ function NlpSandbox() {
   const [method, setMethod] = useState("hybrid");
   const [dlThreshold, setDlThreshold] = useState(0.5);
   const [nerModel, setNerModel] = useState("vihealthbert");
+  const [dlModel, setDlModel] = useState("long");
   const [loading, setLoading] = useState(false);
   const [analysisResult, setAnalysisResult] = useState(null);
 
@@ -159,6 +160,7 @@ function NlpSandbox() {
       };
       if (method === "dl") {
         payload.threshold = dlThreshold;
+        payload.dl_model = dlModel;
       } else if (method === "ner") {
         payload.ner_model = nerModel;
       }
@@ -385,6 +387,17 @@ function NlpSandbox() {
     const { original_text, entities } = analysisResult;
     const sortedEntities = [...(entities || [])].sort((a, b) => a.start - b.start);
     
+    const docEntities = [];
+    const tokenEntities = [];
+    
+    sortedEntities.forEach(ent => {
+      if (ent.start === 0 && ent.end >= original_text.length) {
+        docEntities.push(ent);
+      } else {
+        tokenEntities.push(ent);
+      }
+    });
+    
     const elements = [];
     let lastIndex = 0;
 
@@ -425,68 +438,7 @@ function NlpSandbox() {
       });
     };
 
-    if (method === "dl") {
-      elements.push(
-        <React.Fragment key="plain-full">
-          {renderPlainSpans(original_text, 0)}
-        </React.Fragment>
-      );
-      
-      elements.push(
-        <div key="dl-tags-container" className="mt-6 border-t border-[var(--border-color)] pt-4" style={{ lineHeight: "normal" }}>
-          <h4 className="text-sm font-semibold mb-3 text-cyan-400">Document-Level Predictions</h4>
-          <div className="flex flex-wrap gap-2">
-            {sortedEntities.map((entity, idx) => {
-              const isSelected = selectedEntity && selectedEntity.canonical_name === entity.canonical_name;
-              let tokenClass = "nlp-token entity nlp-span-diagnosis";
-              if (isSelected) tokenClass += " selected";
-              return (
-                <span
-                  key={`dl-entity-${idx}`}
-                  className={tokenClass}
-                  style={{ display: "inline-block", cursor: "pointer", padding: "6px 12px", borderRadius: "16px" }}
-                  onClick={() => {
-                    setSelectedEntity(entity);
-                    setSelectedToken({
-                      text: "Document-Level Prediction",
-                      start: 0,
-                      end: original_text.length || 0,
-                      isWord: false
-                    });
-                    setEditCui(entity.cui || "");
-                    setEditCanonicalName(entity.canonical_name || "");
-                    setEditCategory(entity.category || "Diagnosis");
-                    setEditDetailClass(entity.type || "Diagnosis");
-                    setEditIcd10(entity.codes?.icd10 || "");
-                    setEditRxnorm(entity.codes?.rxnorm || "");
-                    setEditSnomed(entity.codes?.snomed || "");
-                    setEditLoinc(entity.codes?.loinc || "");
-                    setEditMesh(entity.codes?.mesh || "");
-                    setEditOmim(entity.codes?.omim || "");
-                    setEditIcd9(entity.codes?.icd9 || "");
-                    setEditDrugbank(entity.codes?.drugbank || "");
-                    setEditHpo(entity.codes?.hpo || "");
-                    setEditPubchem(entity.codes?.pubchem || "");
-                    setEditPubmed(entity.codes?.pubmed || "");
-                    setManuallyAddedDbs([]);
-                  }}
-                >
-                  {entity.canonical_name} <span className="opacity-70 ml-1 text-xs">({(entity.similarity * 100).toFixed(0)}%)</span>
-                </span>
-              );
-            })}
-          </div>
-        </div>
-      );
-      
-      return (
-        <div className="nlp-highlighted-content" style={{ lineHeight: "2.9rem" }}>
-          {elements}
-        </div>
-      );
-    }
-
-    sortedEntities.forEach((entity, idx) => {
+    tokenEntities.forEach((entity, idx) => {
       // Add leading plain text (rendered word by word)
       if (entity.start > lastIndex) {
         const textSegment = original_text.substring(lastIndex, entity.start);
@@ -555,6 +507,56 @@ function NlpSandbox() {
         <React.Fragment key={`plain-${lastIndex}`}>
           {renderPlainSpans(textSegment, lastIndex)}
         </React.Fragment>
+      );
+    }
+    
+    // Render Document Level Predictions at the bottom
+    if (docEntities.length > 0) {
+      elements.push(
+        <div key="dl-tags-container" className="mt-6 border-t border-[var(--border-color)] pt-4" style={{ lineHeight: "normal", display: "block", width: "100%" }}>
+          <h4 className="text-sm font-semibold mb-3 text-cyan-400">Document-Level Predictions</h4>
+          <div className="flex flex-wrap gap-2">
+            {docEntities.map((entity, idx) => {
+              const isSelected = selectedEntity && selectedEntity.canonical_name === entity.canonical_name;
+              let tokenClass = "nlp-token entity nlp-span-diagnosis";
+              if (isSelected) tokenClass += " selected";
+              return (
+                <span
+                  key={`dl-entity-${idx}`}
+                  className={tokenClass}
+                  style={{ display: "inline-block", cursor: "pointer", padding: "6px 12px", borderRadius: "16px" }}
+                  onClick={() => {
+                    setSelectedEntity(entity);
+                    setSelectedToken({
+                      text: "Document-Level Prediction",
+                      start: 0,
+                      end: original_text.length || 0,
+                      isWord: false
+                    });
+                    setEditCui(entity.cui || "");
+                    setEditCanonicalName(entity.canonical_name || "");
+                    setEditCategory(entity.category || "Diagnosis");
+                    setEditDetailClass(entity.type || "Diagnosis");
+                    setEditIcd10(entity.codes?.icd10 || "");
+                    setEditRxnorm(entity.codes?.rxnorm || "");
+                    setEditSnomed(entity.codes?.snomed || "");
+                    setEditLoinc(entity.codes?.loinc || "");
+                    setEditMesh(entity.codes?.mesh || "");
+                    setEditOmim(entity.codes?.omim || "");
+                    setEditIcd9(entity.codes?.icd9 || "");
+                    setEditDrugbank(entity.codes?.drugbank || "");
+                    setEditHpo(entity.codes?.hpo || "");
+                    setEditPubchem(entity.codes?.pubchem || "");
+                    setEditPubmed(entity.codes?.pubmed || "");
+                    setManuallyAddedDbs([]);
+                  }}
+                >
+                  {entity.canonical_name} <span className="opacity-70 ml-1 text-xs">({(entity.similarity * 100).toFixed(0)}%)</span>
+                </span>
+              );
+            })}
+          </div>
+        </div>
       );
     }
 
@@ -827,8 +829,20 @@ function NlpSandbox() {
           </div>
           
           {method === "dl" && (
-            <div className="setting-control" style={{ minWidth: '150px' }}>
-              <span className="section-label">Threshold ({dlThreshold})</span>
+            <>
+              <div className="setting-control" style={{ minWidth: '150px' }}>
+                <span className="section-label">Model Architecture</span>
+                <select
+                  className="custom-select"
+                  value={dlModel}
+                  onChange={(e) => setDlModel(e.target.value)}
+                >
+                  <option value="long">Longformer (statedict_900_202)</option>
+                  <option value="short">PLM-ICD (vihealthbert)</option>
+                </select>
+              </div>
+              <div className="setting-control" style={{ minWidth: '150px' }}>
+                <span className="section-label">Threshold ({dlThreshold})</span>
               <input
                 type="range"
                 min="0.5"
@@ -839,6 +853,7 @@ function NlpSandbox() {
                 className="w-full accent-cyan"
               />
             </div>
+            </>
           )}
           
           {method === "ner" && (
@@ -848,7 +863,7 @@ function NlpSandbox() {
                 type="text"
                 value={nerModel}
                 onChange={(e) => setNerModel(e.target.value)}
-                placeholder="vihealthbert"
+                placeholder="phobert"
                 className="custom-input w-full mt-1 bg-white/5 border-white/10"
                 style={{ padding: "8px 12px", borderRadius: "6px" }}
               />
