@@ -11,7 +11,7 @@ from safetensors.torch import load_file
 import warnings
 
 # Add root project dir to path so we can import our modules
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
@@ -25,7 +25,14 @@ def load_data(filepath):
             if not line.strip(): continue
             data = json.loads(line)
             texts.append(data.get("text", ""))
-            labels.append(data.get("gold_entities", []))
+            
+            gold_ent = data.get("gold_entities", [])
+            if isinstance(gold_ent, dict):
+                # Load ONLY Disease/Symptom
+                disease_cuis = gold_ent.get("Disease/Symptom", [])
+                labels.append(list(set(disease_cuis)))
+            else:
+                labels.append(gold_ent)
     return texts, labels
 
 def compute_metrics(p: EvalPrediction):
@@ -35,18 +42,19 @@ def compute_metrics(p: EvalPrediction):
     y_pred = (preds >= 0.5).astype(int)
     y_true = p.label_ids
 
-    macro_f1 = f1_score(y_true=y_true, y_pred=y_pred, average='macro', zero_division=0)
-    micro_f1 = f1_score(y_true=y_true, y_pred=y_pred, average='micro', zero_division=0)
+    from sklearn.metrics import accuracy_score
     accuracy = accuracy_score(y_true=y_true, y_pred=y_pred)
     
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", category=UserWarning)
-        mAP = average_precision_score(y_true=y_true, y_score=preds, average='macro')
+        try:
+            from sklearn.metrics import average_precision_score
+            mAP = average_precision_score(y_true=y_true, y_score=preds, average='macro')
+        except:
+            mAP = 0
 
     return {
         "mAP": mAP,
-        "macro_f1": macro_f1,
-        "micro_f1": micro_f1,
         "accuracy": accuracy
     }
 
@@ -54,8 +62,8 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 
 def evaluate_model(
     model_name="vihealthbert",
-    model_dir=os.path.join(script_dir, "results", "final_model"),
-    classes_file=os.path.join(script_dir, "results", "classes.json"),
+    model_dir=os.path.join(project_root, "modules", "extend", "training", "results", "final_model"),
+    classes_file=os.path.join(project_root, "modules", "extend", "training", "results", "classes.json"),
     data_file="data/viettel/vietnamese_ner/training/vietnamese/document_classification/cui_mapped_doc_class_test.jsonl",
     batch_size=16
 ):
@@ -108,7 +116,6 @@ def evaluate_model(
         # Fallback to pytorch_model.bin if safetensors isn't used
         state_dict = torch.load(os.path.join(model_dir, "pytorch_model.bin"), map_location="cpu")
         
-    # Remove "module." prefix if saved via nn.DataParallel in Kaggle
     clean_state_dict = {}
     for k, v in state_dict.items():
         if k.startswith("module."):
@@ -133,19 +140,54 @@ def evaluate_model(
     )
     
     print("\nRunning evaluation on the dataset...\n")
-    metrics = trainer.evaluate()
+    pred_output = trainer.predict(eval_dataset)
+    metrics = pred_output.metrics
+    
+    # Calculate explicit string-based TP, FP, FN against unfiltered raw labels
+    preds = torch.sigmoid(torch.tensor(pred_output.predictions)).numpy()
+    y_pred = (preds >= 0.5).astype(int)
+    
+    total_tp = 0
+    total_fp = 0
+    total_fn = 0
+    import numpy as np
+    
+    for i in range(len(y_pred)):
+        pred_indices = np.where(y_pred[i] == 1)[0]
+        pred_cuis = set([classes[idx] for idx in pred_indices])
+        gold_cuis = set(labels[i])
+        
+        total_tp += len(gold_cuis.intersection(pred_cuis))
+        total_fp += len(pred_cuis - gold_cuis)
+        total_fn += len(gold_cuis - pred_cuis)
+        
+    micro_p = total_tp / (total_tp + total_fp) if (total_tp + total_fp) > 0 else 0.0
+    micro_r = total_tp / (total_tp + total_fn) if (total_tp + total_fn) > 0 else 0.0
+    micro_f1 = 2 * (micro_p * micro_r) / (micro_p + micro_r) if (micro_p + micro_r) > 0 else 0.0
     
     print("================ EVALUATION RESULTS ================")
-    print(f"Validation Loss : {metrics.get('eval_loss', 0):.4f}")
-    print(f"mAP             : {metrics.get('eval_mAP', 0):.4f}")
-    print(f"Macro F1        : {metrics.get('eval_macro_f1', 0):.4f}")
-    print(f"Micro F1        : {metrics.get('eval_micro_f1', 0):.4f}")
-    print(f"Accuracy (EMR)  : {metrics.get('eval_accuracy', 0):.4f}")
+    print(f"Validation Loss : {metrics.get('test_loss', 0):.4f}")
+    print(f"mAP             : {metrics.get('test_mAP', 0):.4f}")
+    print(f"Accuracy (EMR)  : {metrics.get('test_accuracy', 0):.4f}")
+    print("----------------------------------------------------")
+    print(f"OVERALL METRICS (Unfiltered Set-based TP/FP/FN):")
+    print(f"  True Positives  : {total_tp}")
+    print(f"  False Positives : {total_fp}")
+    print(f"  False Negatives : {total_fn}")
+    print("----------------------------------------------------")
+    print(f"  Precision       : {micro_p:.4f}")
+    print(f"  Recall          : {micro_r:.4f}")
+    print(f"  F1-Score        : {micro_f1:.4f}")
     print("====================================================")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Evaluate Document Classification Model")
     parser.add_argument("--model_name", type=str, default="vihealthbert", help="Backbone model used during training (vihealthbert, phobert, sapbert)")
+    parser.add_argument("--data_file", type=str, default=None, help="Path to the JSONL dataset to evaluate on")
     args = parser.parse_args()
     
-    evaluate_model(model_name=args.model_name)
+    kwargs = {"model_name": args.model_name}
+    if args.data_file:
+        kwargs["data_file"] = args.data_file
+        
+    evaluate_model(**kwargs)

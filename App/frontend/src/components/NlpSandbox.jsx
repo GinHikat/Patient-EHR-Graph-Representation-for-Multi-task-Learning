@@ -62,7 +62,7 @@ function NlpSandbox() {
   const [inputText, setInputText] = useState(SAMPLE_NOTES[0].text);
   const [method, setMethod] = useState("hybrid");
   const [dlThreshold, setDlThreshold] = useState(0.5);
-  const [nerModel, setNerModel] = useState("vihealthbert");
+  const [nerModel, setNerModel] = useState("phobert");
   const [dlModel, setDlModel] = useState("long");
   const [loading, setLoading] = useState(false);
   const [analysisResult, setAnalysisResult] = useState(null);

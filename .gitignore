@@ -27,6 +27,8 @@ Clinical-Note-Extraction/
 
 modules/extend/model/statedict/*
 
+modules/extend/training/results/*
+
 .gitnexus
 *.vscode 
 Note/
