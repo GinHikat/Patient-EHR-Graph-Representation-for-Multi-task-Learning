@@ -21,7 +21,8 @@ from modules.extend.model.inference_ner import NER
 def main():
     parser = argparse.ArgumentParser(description="End-to-End Evaluation against Gold Standard SapBERT CUIs")
     parser.add_argument("--extractor", type=str, choices=["qwen", "ner"], default="ner", help="Which model type to use for extraction.")
-    parser.add_argument("--qwen_model", type=str, default="PeterPaker123/Qwen2.5-7B-Vietnamese-Medical-NER-GRPO", help="HuggingFace Hub ID for Qwen model")
+    parser.add_argument("--qwen_model", type=str, default="PeterPaker123/Qwen2.5-7B-Vietnamese-Medical-NER-GRPO", help="HuggingFace Hub ID for Qwen model (or LoRA adapter)")
+    parser.add_argument("--base_model", type=str, default="", help="HuggingFace Hub ID for base model if using a LoRA adapter")
     parser.add_argument("--ner_model", type=str, default="vihealthbert", help="Local NER model folder name (e.g. vihealthbert, vipubmed-deberta)")
     args = parser.parse_args()
 
@@ -36,16 +37,27 @@ def main():
         return
 
     if args.extractor == "qwen":
-        print(f"Loading tokenizer and Qwen model from {args.qwen_model}...")
-        tokenizer_id = "PeterPaker123/Qwen2.5-7B-Vietnamese-Medical-NER"
+        tokenizer_id = args.base_model if args.base_model else args.qwen_model
+        print(f"Loading tokenizer from {tokenizer_id}...")
         tokenizer = AutoTokenizer.from_pretrained(tokenizer_id)
         tokenizer.chat_template = "{% for message in messages %}{% if loop.first and messages[0]['role'] != 'system' %}{{ '<|im_start|>system\\nYou are a helpful assistant.<|im_end|>\\n' }}{% endif %}{{'<|im_start|>' + message['role'] + '\\n' + message['content'] + '<|im_end|>' + '\\n'}}{% endfor %}{% if add_generation_prompt %}{{ '<|im_start|>assistant\\n' }}{% endif %}"
         
-        model = AutoModelForCausalLM.from_pretrained(
-            args.qwen_model, 
-            device_map="auto", 
-            torch_dtype=torch.bfloat16
-        )
+        print(f"Loading model {args.qwen_model}...")
+        if args.base_model:
+            print(f"Loading base model {args.base_model} and applying LoRA...")
+            from peft import PeftModel
+            base_model = AutoModelForCausalLM.from_pretrained(
+                args.base_model,
+                device_map="auto",
+                torch_dtype=torch.bfloat16
+            )
+            model = PeftModel.from_pretrained(base_model, args.qwen_model)
+        else:
+            model = AutoModelForCausalLM.from_pretrained(
+                args.qwen_model, 
+                device_map="auto", 
+                torch_dtype=torch.bfloat16
+            )
     else:
         print(f"Loading local NER model '{args.ner_model}'...")
         ner_extractor = NER(args.ner_model)
@@ -168,15 +180,15 @@ def main():
             
             predicted_entities = []
             try:
-                cleaned_response = response.strip()
-                if cleaned_response.startswith("```json"):
-                    cleaned_response = cleaned_response[7:]
-                elif cleaned_response.startswith("```"):
-                    cleaned_response = cleaned_response[3:]
-                if cleaned_response.endswith("```"):
-                    cleaned_response = cleaned_response[:-3]
-                    
-                predicted_entities = json.loads(cleaned_response.strip())
+                import re
+                # Search for anything between ```json and ```, handling multi-line properly
+                json_match = re.search(r'```json\s*(.*?)\s*```', response, re.DOTALL | re.IGNORECASE)
+                if json_match:
+                    json_str = json_match.group(1).strip()
+                    predicted_entities = json.loads(json_str)
+                else:
+                    # Fallback if it just outputs raw JSON without markdown tags
+                    predicted_entities = json.loads(response.strip())
             except json.JSONDecodeError:
                 pass
         else:

@@ -21,7 +21,7 @@ LABEL_LIST = [
 _PIPELINES = {}
 
 class NER:
-    def __init__(self, model_name):
+    def __init__(self, model_name = 'phobert'):
         self.model_name = model_name.lower()
 
     def extract_entities(self, text: str) -> list:
@@ -72,7 +72,7 @@ class NER:
             if label == "O":
                 continue
             
-            term = entity['word'].strip()
+            term = entity['word'].strip().replace('@@', '')
             
             start_idx = text.find(term, current_search_idx)
             
@@ -89,5 +89,31 @@ class NER:
                 "offset": offset,
                 "label": label
             })
+            
+        merged_entities = []
+        for ent in entities:
+            if not merged_entities:
+                merged_entities.append(ent)
+                continue
+                
+            prev_ent = merged_entities[-1]
+            if prev_ent['label'] == ent['label']:
+                p_start, p_end = prev_ent['offset']
+                c_start, c_end = ent['offset']
+                
+                # Check if subsequent place (adjacent or separated by a single space)
+                if p_end is not None and c_start is not None and (c_start - p_end) <= 1:
+                    if p_start is not None and c_end is not None:
+                        new_term = text[p_start:c_end]
+                    else:
+                        sep = " " if (c_start - p_end) == 1 else ""
+                        new_term = prev_ent['term'] + sep + ent['term']
+                        
+                    prev_ent['term'] = new_term
+                    prev_ent['offset'] = (p_start, c_end)
+                else:
+                    merged_entities.append(ent)
+            else:
+                merged_entities.append(ent)
         
-        return entities
+        return merged_entities

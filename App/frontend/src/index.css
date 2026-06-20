@@ -252,11 +252,10 @@ body::before {
   transform: translateX(-50%);
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 30px;
   padding: 12px 28px;
   z-index: 20;
-  width: calc(100% - 48px);
+  width: fit-content;
   border-radius: 20px;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
 }

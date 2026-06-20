@@ -30,7 +30,7 @@ def load_data(filepath):
             data = json.loads(line)
             # Structure: {"text": "...", "gold_entities": ["C123", "C456"]}
             texts.append(data.get("text", ""))
-            labels.append(data.get("gold_entities", []))
+            labels.append(data.get("labels", []))
     return texts, labels
 
 import warnings
@@ -75,9 +75,9 @@ def train_classifier(
     # Determine HF Path for Tokenizer
     model_path = MODEL_CHOICES.get(model_name.lower(), model_name)
     
-    train_file = os.path.join(base_dir, "cui_mapped_doc_class_train.jsonl")
-    dev_file = os.path.join(base_dir, "cui_mapped_doc_class_dev.jsonl")
-    test_file = os.path.join(base_dir, "cui_mapped_doc_class_test.jsonl")
+    train_file = os.path.join(base_dir, "doc_class_train.jsonl")
+    dev_file = os.path.join(base_dir, "doc_class_dev.jsonl")
+    test_file = os.path.join(base_dir, "doc_class_test.jsonl")
     
     print(f"Loading data from {base_dir}...")
     train_texts, train_labels = load_data(train_file)
@@ -86,14 +86,11 @@ def train_classifier(
     
     print(f"Train size: {len(train_texts)} | Dev size: {len(dev_texts)} | Test size: {len(test_texts)}")
     
-    # Binarize labels
+    # Fit MultiLabelBinarizer but DO NOT transform the whole dataset yet to avoid RAM explosion
     mlb = MultiLabelBinarizer()
     mlb.fit(train_labels + dev_labels)
     num_labels = len(mlb.classes_)
     print(f"Total unique CUI classes: {num_labels}")
-    
-    y_train = mlb.transform(train_labels)
-    y_dev = mlb.transform(dev_labels)
     
     # Save MLB classes for later inference
     os.makedirs(output_dir, exist_ok=True)
@@ -104,26 +101,41 @@ def train_classifier(
     print(f"Loading tokenizer: {model_path}")
     tokenizer = AutoTokenizer.from_pretrained(model_path)
     
-    def tokenize_function(texts, labels):
-        # We use max_length=256 since length_distribution showed max length was 250 words
-        encodings = tokenizer(texts, padding="max_length", truncation=True, max_length=256)
-        # Convert to list of dicts for HF Dataset
-        items = []
-        for i in range(len(texts)):
-            item = {key: val[i] for key, val in encodings.items()}
-            item['labels'] = labels[i].tolist() # Multi-hot float array
-            items.append(item)
-        return items
-        
-    print("Tokenizing datasets...")
-    train_dataset = Dataset.from_list(tokenize_function(train_texts, y_train))
-    dev_dataset = Dataset.from_list(tokenize_function(dev_texts, y_dev))
+    print("Converting to HuggingFace Datasets and Tokenizing in batches (Memory Efficient)...")
     
-    import warnings
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        y_test = mlb.transform(test_labels)
-    test_dataset = Dataset.from_list(tokenize_function(test_texts, y_test))
+    # We pass the raw string labels into the dataset. 
+    # They take almost zero memory compared to dense multi-hot vectors.
+    train_dataset = Dataset.from_dict({'text': train_texts, 'raw_labels': train_labels})
+    dev_dataset = Dataset.from_dict({'text': dev_texts, 'raw_labels': dev_labels})
+    test_dataset = Dataset.from_dict({'text': test_texts, 'raw_labels': test_labels})
+    
+    def tokenize_function(examples):
+        return tokenizer(examples["text"], padding="max_length", truncation=True, max_length=256)
+        
+    # Map tokenization only. No binarization happens here!
+    # This keeps PyArrow memory practically at 0 bytes.
+    train_dataset = train_dataset.map(tokenize_function, batched=True, batch_size=1000)
+    dev_dataset = dev_dataset.map(tokenize_function, batched=True, batch_size=1000)
+    test_dataset = test_dataset.map(tokenize_function, batched=True, batch_size=1000)
+    
+    # Remove raw text, but KEEP raw_labels so our collator can binarize them on the fly!
+    train_dataset = train_dataset.remove_columns(["text"])
+    dev_dataset = dev_dataset.remove_columns(["text"])
+    test_dataset = test_dataset.remove_columns(["text"])
+    
+    # Dynamic Data Collator: Converts string labels to dense float arrays ONLY for the 16 items in the current batch
+    def custom_collate_fn(features):
+        batch = {}
+        batch["input_ids"] = torch.tensor([f["input_ids"] for f in features], dtype=torch.long)
+        batch["attention_mask"] = torch.tensor([f["attention_mask"] for f in features], dtype=torch.long)
+        if "raw_labels" in features[0]:
+            raw_labels = [f["raw_labels"] for f in features]
+            import warnings
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                dense_labels = mlb.transform(raw_labels)
+            batch["labels"] = torch.tensor(dense_labels, dtype=torch.float32)
+        return batch
     
     # Initialize Model
     print(f"\nInitializing PLM-ICD Architecture with {model_name} backbone...")
@@ -139,7 +151,9 @@ def train_classifier(
         logging_strategy="epoch",
         report_to="none", 
         logging_dir=os.path.join(output_dir, "logs"),
-        fp16=torch.cuda.is_available() # Use Mixed Precision
+        fp16=torch.cuda.is_available(), # Use Mixed Precision
+        remove_unused_columns=False,    # PREVENT TRAINER FROM DELETING raw_labels!
+        dataloader_num_workers=4        # SPEED UP BATCHING USING MULTIPLE CPU CORES
     )
     
     # Custom Optimizer: The pretrained backbone gets a small LR (5e-5) to avoid catastrophic forgetting,
@@ -173,6 +187,7 @@ def train_classifier(
         train_dataset=train_dataset,
         eval_dataset=dev_dataset,
         compute_metrics=compute_metrics,
+        data_collator=custom_collate_fn,
         callbacks=[PrintMetricsCallback()],
         optimizers=(optimizer, scheduler)
     )

@@ -392,6 +392,7 @@ def extract_entities_dl(text: str, threshold: float = 0.5, model_length: str = "
         }
     else:
         # SHORT MODEL (vihealthbert Kaggle Output)
+        print(f"[PLM-ICD Deep Learning] Processing text with threshold={threshold}...")
         import torch
         import json
         import pandas as pd
@@ -403,6 +404,7 @@ def extract_entities_dl(text: str, threshold: float = 0.5, model_length: str = "
         classes_file = os.path.join(project_root, "modules", "extend", "training", "results", "classes.json")
         
         if _mlb_classes is None:
+            print("[PLM-ICD Deep Learning] Loading classes.json...")
             with open(classes_file, "r", encoding="utf-8") as f:
                 _mlb_classes = json.load(f)
                 
@@ -417,6 +419,7 @@ def extract_entities_dl(text: str, threshold: float = 0.5, model_length: str = "
                 _external_kg_cache = pd.DataFrame()
                 
         if _plmicd_model is None:
+            print("[PLM-ICD Deep Learning] Loading model state dict...")
             _plmicd_model = PLMICDModel(num_labels=len(_mlb_classes), model_name="vihealthbert")
             state_dict = load_file(os.path.join(model_dir, "model.safetensors"))
             # Strip module. prefix if saved from DataParallel in Kaggle
@@ -425,6 +428,7 @@ def extract_entities_dl(text: str, threshold: float = 0.5, model_length: str = "
             _plmicd_model.eval()
             
         if _vihealthbert_tokenizer is None:
+            print("[PLM-ICD Deep Learning] Loading tokenizer...")
             _vihealthbert_tokenizer = AutoTokenizer.from_pretrained(model_dir)
             
         encodings = _vihealthbert_tokenizer(text, padding="max_length", truncation=True, max_length=256, return_tensors="pt")
