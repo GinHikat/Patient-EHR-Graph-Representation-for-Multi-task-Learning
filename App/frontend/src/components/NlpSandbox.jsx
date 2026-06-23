@@ -63,7 +63,8 @@ function NlpSandbox() {
   const [method, setMethod] = useState("hybrid");
   const [dlThreshold, setDlThreshold] = useState(0.5);
   const [nerModel, setNerModel] = useState("phobert");
-  const [dlModel, setDlModel] = useState("long");
+  const [nerLang, setNerLang] = useState("vi");
+  const [dlModel, setDlModel] = useState("auto");
   const [loading, setLoading] = useState(false);
   const [analysisResult, setAnalysisResult] = useState(null);
 
@@ -163,6 +164,7 @@ function NlpSandbox() {
         payload.dl_model = dlModel;
       } else if (method === "ner") {
         payload.ner_model = nerModel;
+        payload.ner_lang = nerLang;
       }
       const response = await axios.post(`${API_BASE_URL}/nlp/analyze`, payload);
       setAnalysisResult(response.data);
@@ -832,14 +834,7 @@ function NlpSandbox() {
             <>
               <div className="setting-control" style={{ minWidth: '150px' }}>
                 <span className="section-label">Model Architecture</span>
-                <select
-                  className="custom-select"
-                  value={dlModel}
-                  onChange={(e) => setDlModel(e.target.value)}
-                >
-                  <option value="long">Longformer (statedict_900_202)</option>
-                  <option value="short">PLM-ICD (vihealthbert)</option>
-                </select>
+                <span className="custom-input text-sm flex items-center bg-white/5 border-white/10 text-cyan-400 font-semibold cursor-not-allowed">Auto-Detect</span>
               </div>
               <div className="setting-control" style={{ minWidth: '150px' }}>
                 <span className="section-label">Threshold ({dlThreshold})</span>
@@ -857,17 +852,37 @@ function NlpSandbox() {
           )}
           
           {method === "ner" && (
-            <div className="setting-control" style={{ minWidth: '150px' }}>
-              <span className="section-label">NER Model</span>
-              <input
-                type="text"
-                value={nerModel}
-                onChange={(e) => setNerModel(e.target.value)}
-                placeholder="phobert"
-                className="custom-input w-full mt-1 bg-white/5 border-white/10"
-                style={{ padding: "8px 12px", borderRadius: "6px" }}
-              />
-            </div>
+            <>
+              <div className="setting-control" style={{ minWidth: '120px' }}>
+                <span className="section-label">Language</span>
+                <select
+                  className="custom-select"
+                  value={nerLang}
+                  onChange={(e) => {
+                    setNerLang(e.target.value);
+                    if (e.target.value === "en" && (nerModel === "phobert" || nerModel === "vihealthbert")) {
+                      setNerModel("sapbert");
+                    } else if (e.target.value === "vi" && ["sapbert", "pubmedbert", "biobert"].includes(nerModel)) {
+                      setNerModel("phobert");
+                    }
+                  }}
+                >
+                  <option value="vi">Vietnamese (Vi)</option>
+                  <option value="en">English (En)</option>
+                </select>
+              </div>
+              <div className="setting-control" style={{ minWidth: '150px' }}>
+                <span className="section-label">NER Model</span>
+                <input
+                  type="text"
+                  value={nerModel}
+                  onChange={(e) => setNerModel(e.target.value)}
+                  placeholder={nerLang === "vi" ? "phobert" : "sapbert"}
+                  className="custom-input w-full mt-1 bg-white/5 border-white/10"
+                  style={{ padding: "8px 12px", borderRadius: "6px" }}
+                />
+              </div>
+            </>
           )}
           
           <button

@@ -10,41 +10,59 @@ TOKENIZER_MAP = {
     "xlm-roberta": "xlm-roberta-base"
 }
 
-LABEL_LIST = [
+LABEL_LIST_VI = [
     "O",
     "B-Disease/Symptom", "I-Disease/Symptom",
     "B-Procedure/Treatment", "I-Procedure/Treatment",
     "B-Drug", "I-Drug"
 ]
 
+LABEL_LIST_EN = [
+    "O",
+    "B-Disease", "I-Disease",
+    "B-Chemical", "I-Chemical"
+]
+
 # Cache to prevent reloading models if function is called repeatedly
 _PIPELINES = {}
 
 class NER:
-    def __init__(self, model_name = 'phobert'):
+    def __init__(self, mode='vietnamese', model_name='phobert'):
+        self.mode = mode.lower()
         self.model_name = model_name.lower()
+        
+        if self.mode == 'english' and self.model_name not in ['sapbert', 'pubmedbert', 'biobert']:
+            raise ValueError("For English mode, model_name must be one of: 'sapbert', 'pubmedbert', 'biobert'")
 
     def extract_entities(self, text: str) -> list:
         """
         Extracts medical entities from text using the specified fine-tuned model.
         """
         global _PIPELINES
+        
+        pipeline_key = f"{self.mode}_{self.model_name}"
     
-        if self.model_name not in _PIPELINES:
+        if pipeline_key not in _PIPELINES:
             base_dir = os.path.dirname(os.path.abspath(__file__))
-            model_path = os.path.join(base_dir, "statedict", self.model_name)
+            statedict_dir = os.path.join(base_dir, "..", "statedict", "ner")
+            if self.mode == 'vietnamese':
+                model_path = os.path.join(statedict_dir, self.model_name)
+                label_list = LABEL_LIST_VI
+            else:
+                model_path = os.path.join(statedict_dir, "eng", f"{self.model_name}_ner_english")
+                label_list = LABEL_LIST_EN
         
             if not os.path.exists(model_path):
                 raise FileNotFoundError(f"Model weights not found at: {model_path}")
 
             # Load Tokenizer & Model from the local folder
             tokenizer = AutoTokenizer.from_pretrained(model_path)
-            id2label = {i: label for i, label in enumerate(LABEL_LIST)}
-            label2id = {label: i for i, label in enumerate(LABEL_LIST)}
+            id2label = {i: label for i, label in enumerate(label_list)}
+            label2id = {label: i for i, label in enumerate(label_list)}
 
             model = AutoModelForTokenClassification.from_pretrained(
                 model_path,
-                num_labels=len(LABEL_LIST),
+                num_labels=len(label_list),
                 id2label=id2label,
                 label2id=label2id,
                 ignore_mismatched_sizes=True
@@ -53,7 +71,7 @@ class NER:
             device = 0 if torch.cuda.is_available() else -1
         
             # aggregation_strategy="simple" automatically merges subwords (B/I tags)
-            _PIPELINES[self.model_name] = pipeline(
+            _PIPELINES[pipeline_key] = pipeline(
                 "ner", 
                 model=model, 
                 tokenizer=tokenizer, 
@@ -61,7 +79,7 @@ class NER:
                 aggregation_strategy="simple" 
             )
         
-        raw_results = _PIPELINES[self.model_name](text)
+        raw_results = _PIPELINES[pipeline_key](text)
         entities = []
         
         # Chronological pointer to search through the original text

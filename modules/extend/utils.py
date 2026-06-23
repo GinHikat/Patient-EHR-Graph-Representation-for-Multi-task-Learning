@@ -17,6 +17,29 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.abspath(os.path.join(current_dir, "..", ".."))
 if project_root not in sys.path:
     sys.path.append(project_root)
+
+UMLS_STY_TO_CATEGORY = {
+    "Disease or Syndrome": "Disease", "Neoplastic Process": "Disease", "Pathologic Function": "Disease",
+    "Mental or Behavioral Dysfunction": "Disease", "Cell or Molecular Dysfunction": "Disease", "Experimental Model of Disease": "Disease",
+    "Congenital Abnormality": "Diagnosis", "Acquired Abnormality": "Diagnosis", "Anatomical Abnormality": "Diagnosis", "Injury or Poisoning": "Diagnosis",
+    "Sign or Symptom": "Phenotype", "Finding": "Phenotype", "Clinical Attribute": "Phenotype", "Organism Attribute": "Phenotype",
+    "Physiologic Function": "Phenotype", "Organism Function": "Phenotype", "Organ or Tissue Function": "Phenotype", "Cell Function": "Phenotype", "Biologic Function": "Phenotype",
+    "Anatomical Structure": "Body Parts", "Body Location or Region": "Body Parts", "Body Part, Organ, or Organ Component": "Body Parts",
+    "Body Space or Junction": "Body Parts", "Body Substance": "Body Parts", "Body System": "Body Parts", "Cell": "Body Parts",
+    "Cell Component": "Body Parts", "Tissue": "Body Parts", "Embryonic Structure": "Body Parts", "Fully Formed Anatomical Structure": "Body Parts",
+    "Clinical Drug": "Drugs", "Pharmacologic Substance": "Drugs", "Antibiotic": "Drugs", "Biologically Active Substance": "Drugs",
+    "Hormone": "Drugs", "Vitamin": "Drugs", "Immunologic Factor": "Drugs", "Organic Chemical": "Drugs", 
+    "Chemical": "Chemicals", "Chemical Viewed Functionally": "Chemicals", "Chemical Viewed Structurally": "Chemicals",
+    "Inorganic Chemical": "Chemicals", "Element, Ion, or Isotope": "Chemicals", "Enzyme": "Chemicals", "Amino Acid, Peptide, or Protein": "Chemicals",
+    "Nucleic Acid, Nucleoside, or Nucleotide": "Chemicals", "Gene or Genome": "Chemicals", "Molecular Sequence": "Chemicals",
+    "Nucleotide Sequence": "Chemicals", "Amino Acid Sequence": "Chemicals", "Carbohydrate Sequence": "Chemicals", "Receptor": "Chemicals",
+    "Substance": "Chemicals", "Hazardous or Poisonous Substance": "Chemicals", "Indicator, Reagent, or Diagnostic Aid": "Chemicals",
+    "Therapeutic or Preventive Procedure": "Procedures", "Diagnostic Procedure": "Procedures", "Health Care Activity": "Procedures",
+    "Research Activity": "Procedures", "Molecular Biology Research Technique": "Procedures", "Educational Activity": "Procedures",
+    "Laboratory Procedure": "Labs", "Laboratory or Test Result": "Labs",
+    "Medical Device": "Devices", "Drug Delivery Device": "Devices", "Research Device": "Devices"
+}
+
 class EntityExtractor:
     def __init__(self, mode: str, ner_model: str = "phobert", retrieval_model: str = "cambridgeltl/SapBERT-UMLS-2020AB-all-lang-from-XLMR"):
         """
@@ -34,7 +57,6 @@ class EntityExtractor:
         self.mode = mode.lower()
         self.ner_model = ner_model
         
-        # Default retrieval models, will be dynamically switched based on language
         self.retrieval_model_vi = "cambridgeltl/SapBERT-UMLS-2020AB-all-lang-from-XLMR"
         self.retrieval_model_en = "cambridgeltl/SapBERT-from-PubMedBERT-fulltext"
         
@@ -53,16 +75,18 @@ class EntityExtractor:
         self._mrconso_cache = None
         
     def _detect_lang(self, text: str) -> str:
-        try:
-            lang = detect(text)
-            return 'en' if lang == 'en' else 'vi'
-        except:
+        # Clinical text often confuses langdetect because of Latin/medical terms.
+        # A robust way is to check for specific Vietnamese diacritics.
+        vi_chars = re.compile(r'[àáãạảăắằẵặẳâấầẫậẩđèéẽẹẻêếềễệểìíĩịỉòóõọỏôốồỗộổơớờỡợởùúũụủưứừữựửỳýỹỵỷ]', re.IGNORECASE)
+        if vi_chars.search(text):
             return 'vi'
+        return 'en'
             
-    def _get_ner_instance(self):
-        if self._ner_instance is None:
+    def _get_ner_instance(self, lang="vi"):
+        ner_lang_mode = "english" if lang == "en" else "vietnamese"
+        if self._ner_instance is None or getattr(self._ner_instance, 'mode', '') != ner_lang_mode:
             from modules.extend.model.inference_ner import NER
-            self._ner_instance = NER(model_name=self.ner_model)
+            self._ner_instance = NER(mode=ner_lang_mode, model_name=self.ner_model)
         return self._ner_instance
         
     def _get_sapbert_instance(self, lang="vi"):
@@ -103,37 +127,61 @@ class EntityExtractor:
                 self._external_kg_cache = pd.DataFrame()
         return self._external_kg_cache
 
-    def _get_mlb_classes(self):
-        if self._mlb_classes is None:
-            classes_file = os.path.join(project_root, "modules", "extend", "training", "results", "classes.json")
-            with open(classes_file, "r", encoding="utf-8") as f:
-                self._mlb_classes = json.load(f)
-        return self._mlb_classes
+    def _get_mlb_classes(self, lang="vi"):
+        if lang == "en":
+            if getattr(self, '_mlb_classes_en', None) is None:
+                classes_file = os.path.join(project_root, "modules", "extend", "statedict", "dl_en", "classes_en.json")
+                with open(classes_file, "r", encoding="utf-8") as f:
+                    self._mlb_classes_en = json.load(f)
+            return self._mlb_classes_en
+        else:
+            if getattr(self, '_mlb_classes_vi', None) is None:
+                classes_file = os.path.join(project_root, "modules", "extend", "statedict", "dl_vi", "classes.json")
+                with open(classes_file, "r", encoding="utf-8") as f:
+                    self._mlb_classes_vi = json.load(f)
+            return self._mlb_classes_vi
 
     def _get_doc_classifier(self, lang="vi"):
-        classes = self._get_mlb_classes()
-        model_dir = os.path.join(project_root, "modules", "extend", "training", "results", "final_model")
+        classes = self._get_mlb_classes(lang)
+        model_dir = os.path.join(project_root, "modules", "extend", "statedict", "dl_vi", "final_model")
         from transformers import AutoTokenizer
         from safetensors.torch import load_file
         
         if lang == "en":
             if self._doc_classifier_en is None:
-                # English model: Longformer
-                from transformers import AutoModelForSequenceClassification
+                # English model: PLMICDModel (trained with LAAT head)
+                from modules.extend.model.plmicd_model import PLMICDModel
                 model_name = "yikuan8/Clinical-Longformer"
-                self._longformer_tokenizer = AutoTokenizer.from_pretrained(model_name)
-                # Load the base model with correct num_labels
-                self._doc_classifier_en = AutoModelForSequenceClassification.from_pretrained(
-                    model_name, num_labels=len(classes), ignore_mismatched_sizes=True
-                )
+                self._doc_classifier_en = PLMICDModel(num_labels=len(classes), model_name=model_name)
+                
                 # Load custom weights if available for EN
-                en_model_path = os.path.join(project_root, "models", "doc_classifier_en", "model.safetensors")
+                en_model_path = os.path.join(project_root, "modules", "extend", "statedict", "dl_en", "model_state.pt")
                 if os.path.exists(en_model_path):
-                    state_dict = load_file(en_model_path)
-                    state_dict = {k.replace("module.", ""): v for k, v in state_dict.items()}
+                    import torch
+                    state_dict = torch.load(en_model_path, map_location='cpu')
+                    # Strip _orig_mod. from keys (e.g. from torch.compile)
+                    state_dict = {k.replace("_orig_mod.", "").replace("module.", ""): v for k, v in state_dict.items()}
+                    
+                    # Handle shape mismatches (e.g. 202 vs 575 classes)
+                    current_state = self._doc_classifier_en.state_dict()
+                    for k in list(state_dict.keys()):
+                        if k in current_state and state_dict[k].shape != current_state[k].shape:
+                            if len(state_dict[k].shape) == 1:
+                                new_tensor = current_state[k].clone()
+                                min_size = min(new_tensor.shape[0], state_dict[k].shape[0])
+                                new_tensor[:min_size] = state_dict[k][:min_size]
+                                state_dict[k] = new_tensor
+                            elif len(state_dict[k].shape) == 2:
+                                new_tensor = current_state[k].clone()
+                                min_dim0 = min(new_tensor.shape[0], state_dict[k].shape[0])
+                                min_dim1 = min(new_tensor.shape[1], state_dict[k].shape[1])
+                                new_tensor[:min_dim0, :min_dim1] = state_dict[k][:min_dim0, :min_dim1]
+                                state_dict[k] = new_tensor
+                                
                     self._doc_classifier_en.load_state_dict(state_dict, strict=False)
                 
                 self._doc_classifier_en.eval()
+                self._longformer_tokenizer = AutoTokenizer.from_pretrained(model_name)
             return self._doc_classifier_en, self._longformer_tokenizer
         else:
             if self._doc_classifier_vi is None:
@@ -198,18 +246,18 @@ class EntityExtractor:
             
         return self._mrconso_cache.get(cui, {})
 
-    def extract(self, text: str, lang:str = '') -> pd.DataFrame:
+    def extract(self, text: str, lang:str = '', **kwargs) -> pd.DataFrame:
         if len(lang) < 1:
             lang = self._detect_lang(text)
         
         if self.mode == "quickumls":
             res = self._run_quickumls(text)
         elif self.mode == "ner only":
-            res = self._run_ner_only(text)
+            res = self._run_ner_only(text, lang)
         elif self.mode == "ner + retrieval":
             res = self._run_ner_retrieval(text, lang)
         elif self.mode == "doc_class":
-            res = self._run_doc_class(text, lang)
+            res = self._run_doc_class(text, lang, **kwargs)
         else:
             raise ValueError(f"Unknown mode: {self.mode}")
             
@@ -235,12 +283,15 @@ class EntityExtractor:
                     codes = self._get_cui_vocab_codes(cui) if cui else {}
                     extracted_text = row.get('text', row.get('ngram', ''))
                     canonical_term = row.get('term', '')
+                    sty_name = row.get('type', 'Unknown')
+                    category = UMLS_STY_TO_CATEGORY.get(sty_name, sty_name)
                     
                     results.append({
                         "term": extracted_text,
                         "canonical_name": canonical_term,
                         "offset": (None, None),
-                        "label": row.get('category', row.get('type', 'Other')),
+                        "label": sty_name,
+                        "category": category,
                         "cui": cui,
                         "similarity": row.get('similarity', 1.0),
                         "codes": codes
@@ -287,8 +338,8 @@ class EntityExtractor:
         results.sort(key=lambda x: x['similarity'], reverse=True)
         return results
 
-    def _run_ner_only(self, text: str) -> List[Dict[str, Any]]:
-        ner = self._get_ner_instance()
+    def _run_ner_only(self, text: str, lang: str) -> List[Dict[str, Any]]:
+        ner = self._get_ner_instance(lang)
         ner_results = ner.extract_entities(text)
         return ner_results
 
@@ -303,7 +354,7 @@ class EntityExtractor:
 
     def _run_ner_retrieval(self, text: str, lang: str) -> List[Dict[str, Any]]:
         from sklearn.metrics.pairwise import cosine_similarity
-        ner = self._get_ner_instance()
+        ner = self._get_ner_instance(lang)
         ner_results = ner.extract_entities(text)
         
         if not ner_results:
@@ -370,25 +421,33 @@ class EntityExtractor:
             
         return results
 
-    def _run_doc_class(self, text: str, lang: str) -> List[Dict[str, Any]]:
+    def _run_doc_class(self, text: str, lang: str, threshold: float = 0.5, dl_model: str = "auto") -> List[Dict[str, Any]]:
+        # Override lang based on the chosen dl_model architecture
+        if dl_model == "short":
+            lang = "vi"
+        elif dl_model == "long":
+            lang = "en"
+            
         model, tokenizer = self._get_doc_classifier(lang)
-        classes = self._get_mlb_classes()
+        classes = self._get_mlb_classes(lang)
         ekg_df = self._get_external_kg()
         
         encodings = tokenizer(text, padding="max_length", truncation=True, max_length=256, return_tensors="pt")
+        # Compute predictions
         with torch.no_grad():
             if lang == "en":
-                outputs = model(**encodings)
-            else:
+                # PLMICDModel returns SequenceClassifierOutput with logits
                 outputs = model(input_ids=encodings['input_ids'], attention_mask=encodings['attention_mask'])
-                
+            else:
+                # AutoModelForSequenceClassification returns SequenceClassifierOutput
+                outputs = model(**encodings)
+                    
             probs = torch.sigmoid(outputs.logits).squeeze().numpy()
             
         if probs.ndim == 0:
             probs = [probs.item()]
             
         results = []
-        threshold = 0.5
         for idx, prob in enumerate(probs):
             if prob >= threshold:
                 cui_class = classes[idx]
@@ -400,7 +459,8 @@ class EntityExtractor:
                     match = ekg_df[ekg_df['uml_id'] == cui_class]
                     if not match.empty:
                         row = match.iloc[0]
-                        for col in ['medgemma_trans', 'qwen_trans', 'map_trans', 'name']:
+                        cols_to_check = ['name', 'medgemma_trans', 'qwen_trans', 'map_trans'] if lang == "en" else ['medgemma_trans', 'qwen_trans', 'map_trans', 'name']
+                        for col in cols_to_check:
                             val = row.get(col)
                             if pd.notna(val) and val:
                                 canonical_name = str(val)

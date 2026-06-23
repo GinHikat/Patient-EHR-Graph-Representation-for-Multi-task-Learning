@@ -23,7 +23,8 @@ class NlpAnalyzeRequest(BaseModel):
     method: Optional[str] = "hybrid"
     threshold: Optional[float] = 0.5
     ner_model: Optional[str] = "vihealthbert"
-    dl_model: Optional[str] = "long"
+    ner_lang: Optional[str] = "vi"
+    dl_model: Optional[str] = "auto"
 
 @router.get("/graph", response_model=GraphResponse)
 def get_graph(
@@ -64,7 +65,7 @@ def analyze_text(payload: NlpAnalyzeRequest):
         elif payload.method == "dl":
             res = extract_entities_dl(payload.text, threshold=payload.threshold, model_length=payload.dl_model)
         elif payload.method == "ner":
-            res = extract_entities_ner(payload.text, model_name=payload.ner_model)
+            res = extract_entities_ner(payload.text, model_name=payload.ner_model, lang=payload.ner_lang)
         else:
             res = extract_entities_umls(payload.text)
         return res

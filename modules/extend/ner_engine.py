@@ -400,8 +400,8 @@ def extract_entities_dl(text: str, threshold: float = 0.5, model_length: str = "
         from transformers import AutoTokenizer
         from safetensors.torch import load_file
         
-        model_dir = os.path.join(project_root, "modules", "extend", "training", "results", "final_model")
-        classes_file = os.path.join(project_root, "modules", "extend", "training", "results", "classes.json")
+        model_dir = os.path.join(project_root, "modules", "extend", "statedict", "dl_vi", "final_model")
+        classes_file = os.path.join(project_root, "modules", "extend", "statedict", "dl_vi", "classes.json")
         
         if _mlb_classes is None:
             print("[PLM-ICD Deep Learning] Loading classes.json...")
