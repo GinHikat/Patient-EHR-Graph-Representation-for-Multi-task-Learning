@@ -49,7 +49,7 @@ class NER:
                 model_path = os.path.join(statedict_dir, self.model_name)
                 label_list = LABEL_LIST_VI
             else:
-                model_path = os.path.join(statedict_dir, "eng", f"{self.model_name}_ner_english")
+                model_path = os.path.join(statedict_dir, "eng", f"{self.model_name}")
                 label_list = LABEL_LIST_EN
         
             if not os.path.exists(model_path):
@@ -133,5 +133,15 @@ class NER:
                     merged_entities.append(ent)
             else:
                 merged_entities.append(ent)
+                
+        import string
         
-        return merged_entities
+        # Post-processing: Clean up terms and remove short entities
+        final_entities = []
+        for ent in merged_entities:
+            clean_term = ent['term'].strip(string.punctuation + " \t\n\r")
+            if len(clean_term) >= 3:
+                ent['term'] = clean_term
+                final_entities.append(ent)
+        
+        return final_entities

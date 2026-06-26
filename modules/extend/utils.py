@@ -130,20 +130,20 @@ class EntityExtractor:
     def _get_mlb_classes(self, lang="vi"):
         if lang == "en":
             if getattr(self, '_mlb_classes_en', None) is None:
-                classes_file = os.path.join(project_root, "modules", "extend", "statedict", "dl_en", "classes_en.json")
+                classes_file = os.path.join(project_root, "modules", "extend", 'model', "statedict", "dl_en", "classes_en.json")
                 with open(classes_file, "r", encoding="utf-8") as f:
                     self._mlb_classes_en = json.load(f)
             return self._mlb_classes_en
         else:
             if getattr(self, '_mlb_classes_vi', None) is None:
-                classes_file = os.path.join(project_root, "modules", "extend", "statedict", "dl_vi", "classes.json")
+                classes_file = os.path.join(project_root, "modules", "extend", 'model', "statedict", "dl_vi", "classes.json")
                 with open(classes_file, "r", encoding="utf-8") as f:
                     self._mlb_classes_vi = json.load(f)
             return self._mlb_classes_vi
 
     def _get_doc_classifier(self, lang="vi"):
         classes = self._get_mlb_classes(lang)
-        model_dir = os.path.join(project_root, "modules", "extend", "statedict", "dl_vi", "final_model")
+        model_dir = os.path.join(project_root, "modules", "extend", 'model', "statedict", "dl_vi", "final_model")
         from transformers import AutoTokenizer
         from safetensors.torch import load_file
         
@@ -155,7 +155,7 @@ class EntityExtractor:
                 self._doc_classifier_en = PLMICDModel(num_labels=len(classes), model_name=model_name)
                 
                 # Load custom weights if available for EN
-                en_model_path = os.path.join(project_root, "modules", "extend", "statedict", "dl_en", "model_state.pt")
+                en_model_path = os.path.join(project_root, "modules", "extend", 'model', "statedict", "dl_en", "model_state.pt")
                 if os.path.exists(en_model_path):
                     import torch
                     state_dict = torch.load(en_model_path, map_location='cpu')

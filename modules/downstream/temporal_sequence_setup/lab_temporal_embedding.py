@@ -78,7 +78,6 @@ def get_all_patient_ids(batch_size=10000) -> list[int]:
 
     return all_ids
 
-
 def panel_to_vectors(panel):
     value_vec = np.zeros(VOCAB_SIZE, dtype=np.float32)
     mask_vec  = np.zeros(VOCAB_SIZE, dtype=np.float32)
@@ -91,7 +90,6 @@ def panel_to_vectors(panel):
         except (ValueError, TypeError):
             pass
     return value_vec, mask_vec, panel.get('charttime')
-
 
 def get_panels_for_batch(patient_ids):
     result = query_neo4j(
