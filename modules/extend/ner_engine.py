@@ -455,8 +455,8 @@ def extract_entities_ner(text: str, model_name: str = "vihealthbert", lang: str 
     import numpy as np
     import pandas as pd
     from sklearn.metrics.pairwise import cosine_similarity
-    from modules.extend.model.inference_ner import NER
-    from modules.models.models import EmbeddingModels
+    from modules.extend.model.inference.inference_ner import NER
+    from modules.note_extraction.models import EmbeddingModels
 
     if model_name not in _ner_extractors:
         print(f"Loading NER model {model_name}...")

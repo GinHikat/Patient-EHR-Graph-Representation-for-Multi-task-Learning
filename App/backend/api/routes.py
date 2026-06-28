@@ -57,6 +57,23 @@ def get_stats():
     stats = get_database_stats_data()
     return stats
 
+class RelationRequest(BaseModel):
+    text: str
+    head_span: List[int]
+    target_span: List[int]
+    head_term: str
+    target_term: str
+
+_re_engine = None
+
+def get_re_engine():
+    global _re_engine
+    if _re_engine is None:
+        from modules.extend.model.inference.inference_re import RelationExtractor
+        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "modules", "extend", "model", "statedict", "re", "english"))
+        _re_engine = RelationExtractor(base_dir)
+    return _re_engine
+
 @router.post("/nlp/analyze")
 def analyze_text(payload: NlpAnalyzeRequest):
     try:
@@ -64,13 +81,31 @@ def analyze_text(payload: NlpAnalyzeRequest):
             res = extract_entities_llm(payload.text)
         elif payload.method == "dl":
             res = extract_entities_dl(payload.text, threshold=payload.threshold, model_length=payload.dl_model)
-        elif payload.method == "ner":
+        elif payload.method == "ner" or payload.method == "nere":
+            # NERE uses the same underlying NER extraction first
             res = extract_entities_ner(payload.text, model_name=payload.ner_model, lang=payload.ner_lang)
         else:
             res = extract_entities_umls(payload.text)
         return res
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"NLP analysis failed: {str(e)}")
+
+@router.post("/nlp/relation")
+def get_relation(payload: RelationRequest):
+    try:
+        re_engine = get_re_engine()
+        pair = {
+            "head_span": payload.head_span,
+            "target_span": payload.target_span,
+            "head_term": payload.head_term,
+            "target_term": payload.target_term
+        }
+        results = re_engine.predict(payload.text, [pair])
+        if results:
+            return {"relation": results[0]["predicted_relation"]}
+        return {"relation": "None"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Relation extraction failed: {str(e)}")
 
 @router.get("/nlp/subgraph/{cui}", response_model=GraphResponse)
 def get_cui_subgraph(

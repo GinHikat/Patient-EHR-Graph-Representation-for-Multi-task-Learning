@@ -185,8 +185,8 @@ class SpanPairREModel(nn.Module):
             if labels is not None:
                 loss = torch.tensor(0.0, device=input_ids.device, requires_grad=True)
                 valid_labels_tensor = torch.zeros(1, dtype=torch.long, device=input_ids.device)
-                return (loss, logits, valid_labels_tensor)
-            return logits
+                return {"loss": loss, "logits": logits, "valid_labels": valid_labels_tensor}
+            return {"logits": logits}
             
         combined_vectors = torch.stack(combined_vectors) 
         logits = self.classifier(combined_vectors)
@@ -195,9 +195,9 @@ class SpanPairREModel(nn.Module):
             valid_labels = torch.stack(valid_labels)
             loss_fct = FocalLoss(gamma=2.0)
             loss = loss_fct(logits, valid_labels)
-            return (loss, logits, valid_labels)
+            return {"loss": loss, "logits": logits, "valid_labels": valid_labels}
             
-        return logits
+        return {"logits": logits}
 
 def evaluate_model(model, dataloader, device):
     model.eval()
@@ -214,7 +214,10 @@ def evaluate_model(model, dataloader, device):
             labels = batch["labels"].to(device)
             
             outputs = model(input_ids, attention_mask, span_pairs, pair_mask, labels=labels)
-            loss, logits, valid_labels = outputs[0], outputs[1], outputs[2]
+            if isinstance(outputs, dict):
+                loss, logits, valid_labels = outputs["loss"], outputs["logits"], outputs["valid_labels"]
+            else:
+                loss, logits, valid_labels = outputs[0], outputs[1], outputs[2]
             
             if torch.cuda.device_count() > 1:
                 loss = loss.mean()
@@ -282,7 +285,7 @@ def train_model():
             labels = batch["labels"].to(device)
             
             outputs = model(input_ids, attention_mask, span_pairs, pair_mask, labels=labels)
-            loss = outputs[0]
+            loss = outputs["loss"] if isinstance(outputs, dict) else outputs[0]
             
             if torch.cuda.device_count() > 1:
                 loss = loss.mean()

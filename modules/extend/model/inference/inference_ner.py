@@ -90,7 +90,7 @@ class NER:
             if label == "O":
                 continue
             
-            term = entity['word'].strip().replace('@@', '')
+            term = entity['word'].strip().replace('@@', '').replace('##', '')
             
             start_idx = text.find(term, current_search_idx)
             

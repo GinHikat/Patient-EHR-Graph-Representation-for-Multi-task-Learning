@@ -32,6 +32,10 @@ const SAMPLE_NOTES = [
   {
     title: "Vietnamese Note",
     text: "Bệnh nhân nam, 45 tuổi, nhập viện vì cơn đau tương tự như cơn đau thắt ngực nhưng thường nghiêm trọng hơn và kéo dài; thường xuyên hơn kèm theo khó thở , buồn nôn và nôn ; và thuyên giảm ít hoặc chỉ tạm thời bằng cách nghỉ ngơi hoặc nitroglycerin ."
+  },
+  {
+    title: "Complex Case (Relations)",
+    text: "A 65-year-old male with a history of persistent atrial fibrillation and symptomatic heart failure was started on amiodarone and carvedilol. While carvedilol effectively managed his heart failure, the amiodarone induced severe pulmonary toxicity and thyroid dysfunction. Consequently, levothyroxine was prescribed to resolve the hypothyroidism, and amiodarone was halted to prevent further respiratory decline."
   }
 ];
 
@@ -73,9 +77,16 @@ function NlpSandbox() {
   const [engineChecking, setEngineChecking] = useState(true);
   const [engineLoading, setEngineLoading] = useState(false);
 
-  // Tokenization and editing states
   const [selectedToken, setSelectedToken] = useState(null);
   const [selectedEntity, setSelectedEntity] = useState(null);
+  const [headEntity, setHeadEntity] = useState(null);
+  const [targetEntity, setTargetEntity] = useState(null);
+  const [predictedRelation, setPredictedRelation] = useState(null);
+  const [relationLoading, setRelationLoading] = useState(false);
+
+  // Click-to-Connect relation mapping
+  const [activeRelationSource, setActiveRelationSource] = useState(null);
+  const [predictedRelationsHistory, setPredictedRelationsHistory] = useState([]);
 
   // Form states for manual tag editing
   const [editCui, setEditCui] = useState("");
@@ -154,6 +165,9 @@ function NlpSandbox() {
     setLoading(true);
     setSelectedToken(null);
     setSelectedEntity(null);
+    setActiveRelationSource(null);
+    setPredictedRelation(null);
+    setPredictedRelationsHistory([]);
     try {
       const payload = {
         text: inputText,
@@ -162,7 +176,7 @@ function NlpSandbox() {
       if (method === "dl") {
         payload.threshold = dlThreshold;
         payload.dl_model = dlModel;
-      } else if (method === "ner") {
+      } else if (method === "ner" || method === "nere") {
         payload.ner_model = nerModel;
         payload.ner_lang = nerLang;
       }
@@ -173,6 +187,73 @@ function NlpSandbox() {
       alert("Failed to analyze clinical text: " + (err.response?.data?.detail || err.message));
     } finally {
       setLoading(false);
+    }
+  };
+
+  const predictRelation = async () => {
+    // Legacy function, replaced by drag and drop, but keeping just in case
+  };
+
+  const handleEntityConnectionClick = async (clickedEntity) => {
+    if (method !== "nere") return;
+
+    if (!activeRelationSource) {
+      setActiveRelationSource(clickedEntity);
+      return;
+    }
+
+    const startEnt = activeRelationSource;
+    setActiveRelationSource(null);
+
+    if (startEnt.start === clickedEntity.start && startEnt.end === clickedEntity.end) {
+      return;
+    }
+
+    let head = null;
+    let target = null;
+
+    const startCat = (startEnt.category || "").toLowerCase();
+    const endCat = (clickedEntity.category || "").toLowerCase();
+
+    const isDrug = (cat) => cat.includes("drug") || cat.includes("chemical");
+    const isDisease = (cat) => cat.includes("disease") || cat.includes("diagnosis") || cat.includes("symptom") || cat.includes("phenotype");
+
+    if (isDrug(startCat) && isDisease(endCat)) {
+      head = startEnt;
+      target = clickedEntity;
+    } else if (isDisease(startCat) && isDrug(endCat)) {
+      head = clickedEntity;
+      target = startEnt;
+    } else {
+      setPredictedRelationsHistory(prev => [...prev, {
+        head: startEnt.text,
+        target: clickedEntity.text,
+        relation: "None",
+        id: Date.now()
+      }]);
+      return;
+    }
+
+    setRelationLoading(true);
+    try {
+      const payload = {
+        text: inputText,
+        head_span: [head.start, head.end],
+        target_span: [target.start, target.end],
+        head_term: head.text,
+        target_term: target.text
+      };
+      const response = await axios.post(`${API_BASE_URL}/nlp/relation`, payload);
+      setPredictedRelationsHistory(prev => [...prev, {
+        head: head.text,
+        target: target.text,
+        relation: response.data.relation,
+        id: Date.now()
+      }]);
+    } catch (err) {
+      console.error("Relation prediction failed", err);
+    } finally {
+      setRelationLoading(false);
     }
   };
 
@@ -453,6 +534,7 @@ function NlpSandbox() {
 
       // Add grouped entity as a single highlighted tag
       const isSelected = selectedEntity && selectedEntity.start === entity.start && selectedEntity.end === entity.end;
+      const isRelationSource = activeRelationSource && activeRelationSource.start === entity.start && activeRelationSource.end === entity.end;
       const cleanCat = entity.category.toLowerCase().replace(/\s+/g, "");
       let categoryClass = `nlp-span-${cleanCat}`;
       
@@ -460,12 +542,18 @@ function NlpSandbox() {
       if (isSelected) {
         tokenClass += " selected";
       }
+      if (isRelationSource) {
+        tokenClass += " relation-source-selected";
+      }
 
       elements.push(
         <span
           key={`entity-${entity.start}`}
           className={tokenClass}
           onClick={() => {
+            if (method === "nere") {
+              handleEntityConnectionClick(entity);
+            }
             setSelectedEntity(entity);
             setSelectedToken({
               text: entity.text,
@@ -491,6 +579,7 @@ function NlpSandbox() {
             setEditPubmed(entity.codes?.pubmed || "");
             setManuallyAddedDbs([]);
           }}
+          onDragStart={(e) => e.preventDefault()}
         >
           {entity.text}
           <span className="entity-badge-sup ml-1" style={{ fontSize: "0.65rem", textTransform: "uppercase", opacity: 0.85 }}>
@@ -822,11 +911,12 @@ function NlpSandbox() {
               value={method}
               onChange={(e) => setMethod(e.target.value)}
             >
-              <option value="hybrid">Hybrid Engine (QuickUMLS + LLM)</option>
+              <option value="hybrid">LLM Engine</option>
               <option value="local">UMLS Dictionary Matcher (Local)</option>
               <option value="llm">Zero-Shot Medical LLM (Cloud)</option>
               <option value="dl">Deep Learning</option>
               <option value="ner">NER + Retrieval</option>
+              <option value="nere">NERE (NER + RE)</option>
             </select>
           </div>
           
@@ -851,7 +941,7 @@ function NlpSandbox() {
             </>
           )}
           
-          {method === "ner" && (
+          {(method === "ner" || method === "nere") && (
             <>
               <div className="setting-control" style={{ minWidth: '120px' }}>
                 <span className="section-label">Language</span>
@@ -1140,10 +1230,98 @@ function NlpSandbox() {
               <p>Click on any word in the reader to edit annotations or map its Neo4j subgraph.</p>
             </div>
           )}
+          {/* Relation Predictor History Panel (Rendered inside the scrollable container) */}
+          {method === "nere" && (
+            <div className="relation-history-panel">
+              <h3 className="relation-history-header">
+                <Network size={16} /> Predicted Relations
+              </h3>
+              <div className="relation-history-subtitle italic">
+                {activeRelationSource ? (
+                  <span className="text-cyan animate-pulse font-semibold">
+                    ➔ Select target entity to map relation with "{activeRelationSource.text}"...
+                  </span>
+                ) : (
+                  "Click an entity in the text, then click another to map their relation."
+                )}
+              </div>
+              
+              {relationLoading && (
+                <div className="flex justify-center my-2"><Sparkles size={16} className="spin text-cyan" /></div>
+              )}
+
+              <div className="relation-history-list">
+                {predictedRelationsHistory.length === 0 && !relationLoading && (
+                  <div className="text-center text-xs text-white/40 py-2">No relations mapped yet.</div>
+                )}
+                {predictedRelationsHistory.map(rel => (
+                  <div key={rel.id} className="relation-history-item">
+                    <div className="relation-item-flow">
+                      <span className="relation-item-entity-head" title={rel.head}>{rel.head}</span>
+                      <span className="relation-item-arrow">➔</span>
+                      <span className="relation-item-entity-target" title={rel.target}>{rel.target}</span>
+                    </div>
+                    <div className="relation-item-badge-container">
+                      <span className={`relation-item-badge ${
+                        rel.relation === 'None' ? 'none' :
+                        rel.relation === 'treat' ? 'treat' : 'cause'
+                      }`}>
+                        {rel.relation}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
   );
 }
 
-export default NlpSandbox;
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null, errorInfo: null };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    this.setState({
+      hasError: true,
+      error: error,
+      errorInfo: errorInfo
+    });
+    console.error("ErrorBoundary caught an error", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ padding: "20px", background: "#300", color: "#f88", fontFamily: "monospace", borderRadius: "8px", border: "1px solid red", margin: "20px", zIndex: 9999 }}>
+          <h2>Something went wrong in the NLP Sandbox.</h2>
+          <details open style={{ whiteSpace: "pre-wrap" }}>
+            {this.state.error && this.state.error.toString()}
+            <br />
+            {this.state.errorInfo && this.state.errorInfo.componentStack}
+          </details>
+          <button 
+            onClick={() => window.location.reload()} 
+            style={{ marginTop: "15px", padding: "8px 16px", background: "#e11d48", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}
+          >
+            Reload Page
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+const NlpSandboxWithErrorBoundary = (props) => (
+  <ErrorBoundary>
+    <NlpSandbox {...props} />
+  </ErrorBoundary>
+);
+
+export default NlpSandboxWithErrorBoundary;

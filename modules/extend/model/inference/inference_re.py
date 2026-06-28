@@ -4,7 +4,7 @@ from transformers import AutoTokenizer, AutoModel
 import json
 import os
 import itertools
-from inference_ner import NER
+from .inference_ner import NER
 
 class SpanPairREModel(nn.Module):
     def __init__(self, num_labels, model_name="cambridgeltl/SapBERT-from-PubMedBERT-fulltext"):
@@ -155,9 +155,11 @@ class NEREPipeline:
         print("Pipeline Initialized Successfully!\n")
 
     def run(self, text):
+        print('='*20)
         print(f"Input Text: '{text}'")
+        print('='*20)
         entities = self.ner.extract_entities(text)
-        
+        print('='*20)
         print("Found Entities:")
         for ent in entities:
             print(f"   - {ent['term']} [{ent['label']}] at offset {ent['offset']}")
@@ -181,23 +183,32 @@ class NEREPipeline:
         print(f"\nFormed {len(pairs_to_predict)} candidate pairs. Running Relation Extraction...")
         results = self.re.predict(text, pairs_to_predict)
         
-        print("\nPredicted Relations:")
+        print("\nPredicted Relations (Filtered):")
+        filtered_results = []
+        # Keep track of unique pairs to prevent duplicate printing if there are duplicates
+        seen_pairs = set()
+        
         for res in results:
-            h_term = res["pair"]["head_term"]
-            t_term = res["pair"]["target_term"]
             rel = res["predicted_relation"]
-            print(f"   [{h_term}]  ===({rel})===>  [{t_term}]")
+            if rel != "None":
+                h_term = res["pair"]["head_term"]
+                t_term = res["pair"]["target_term"]
+                pair_key = (h_term, rel, t_term)
+                
+                if pair_key not in seen_pairs:
+                    print(f"   [{h_term}]  ===({rel})===>  [{t_term}]")
+                    seen_pairs.add(pair_key)
+                    filtered_results.append(res)
+        
+        if not filtered_results:
+            print("   No meaningful relations ('treat' or 'cause') found.")
             
-        return results
+        return filtered_results
 
 if __name__ == "__main__":
-    # Test the integrated pipeline
     pipeline = NEREPipeline(ner_model_name='sapbert')
-    
-    # Harder Test Case: 1 Drug vs Many Diseases
     sample_text = (
-        "The 65-year-old patient has a long history of asthma, hypertension, arthritis, and chronic kidney disease. "
-        "Yesterday, the doctor prescribed him aspirin specifically to relieve his acute migraine, "
-        "but he also complained of a sore throat and back pain which were left untreated."
+        # "The patient is prescribed with Aspirin and Metformin, which is used to treat Hypertension. However, the patient is reported to be suffering from diarrhea, nausea, and vomiting, which are documented as potential side effect of the drugs"
+        "A 65-year-old male with a history of persistent atrial fibrillation and symptomatic heart failure was started on amiodarone and carvedilol. While carvedilol effectively managed his heart failure, the amiodarone induced severe pulmonary toxicity and thyroid dysfunction. Consequently, levothyroxine was prescribed to resolve the hypothyroidism, and amiodarone was halted to prevent further respiratory decline."
     )
     pipeline.run(sample_text)
