@@ -44,7 +44,12 @@ def load_engine():
         
     # Load QuickUMLS matcher
     try:
-        _matcher = QuickUMLS(quick_umls_path, window=10)
+        _matcher = QuickUMLS(
+            quick_umls_path, 
+            window=5, 
+            threshold=0.8, 
+            similarity_name='jaccard'
+        )
     except Exception as e:
         print(f"Error initializing QuickUMLS matcher: {e}")
         raise e

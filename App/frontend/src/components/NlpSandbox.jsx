@@ -690,8 +690,6 @@ function NlpSandbox() {
         </div>
         <ForceGraph2D
           graphData={subgraphData}
-          width={graphDimensions.width}
-          height={graphDimensions.height}
           nodeRelSize={6.5}
           nodeLabel={(node) => `
             <div style="background: rgba(0,0,0,0.9); padding: 8px; border-radius: 4px; color: white; font-family: sans-serif; font-size: 11px;">
@@ -912,8 +910,7 @@ function NlpSandbox() {
               onChange={(e) => setMethod(e.target.value)}
             >
               <option value="hybrid">LLM Engine</option>
-              <option value="local">UMLS Dictionary Matcher (Local)</option>
-              <option value="llm">Zero-Shot Medical LLM (Cloud)</option>
+              <option value="local">UMLS Dictionary Matcher</option>
               <option value="dl">Deep Learning</option>
               <option value="ner">NER + Retrieval</option>
               <option value="nere">NERE (NER + RE)</option>
@@ -995,58 +992,36 @@ function NlpSandbox() {
         </div>
       </div>
 
-      {/* MIDDLE COLUMN: Interactive Highlighted Note & Subgraph Visualizer */}
+      {/* MIDDLE COLUMN: Annotated Note & Subgraph */}
       <div className="nlp-column glass-panel">
-        <div className="middle-panel-tabs">
-          <button
-            className={`tab-btn flex items-center gap-1 transition-all ${
-              activeMiddleTab === "reader" ? "active" : ""
-            }`}
-            onClick={() => setActiveMiddleTab("reader")}
-          >
-            <FileText size={16} />
-            Annotated Note
-          </button>
-          <button
-            className={`tab-btn flex items-center gap-1 transition-all ${
-              activeMiddleTab === "subgraph" ? "active" : ""
-            }`}
-            onClick={() => {
-              if (selectedEntity) {
-                handleMapSubgraph(selectedEntity.cui, selectedEntity.codes);
-              } else {
-                setActiveMiddleTab("subgraph");
-              }
-            }}
-          >
-            <Network size={16} />
-            Subgraph Explorer
-          </button>
+        <div className="panel-header">
+          <FileText className="panel-icon text-cyan" />
+          <h2>Annotated Note</h2>
         </div>
-
-        {activeMiddleTab === "reader" ? (
-          <>
-            <div className="nlp-reader-box overflow-y-auto max-h-[380px]">
-              {renderTokenizedText()}
+        
+        {/* Top half: Annotated Note */}
+        <div className="nlp-reader-box overflow-y-auto flex-1 mb-3">
+          {renderTokenizedText()}
+        </div>
+        
+        {/* Quick metrics */}
+        {analysisResult && (
+          <div className="nlp-quick-metrics mb-3">
+            <div className="quick-metric">
+              <span className="metric-label">Sentences</span>
+              <span className="metric-val">{analysisResult.sentences.length}</span>
             </div>
-            {analysisResult && (
-              <div className="nlp-quick-metrics">
-                <div className="quick-metric">
-                  <span className="metric-label">Sentences</span>
-                  <span className="metric-val">{analysisResult.sentences.length}</span>
-                </div>
-                <div className="quick-metric">
-                  <span className="metric-label">Clinical Entities</span>
-                  <span className="metric-val">{analysisResult.entities.length}</span>
-                </div>
-              </div>
-            )}
-          </>
-        ) : (
-          <div className="nlp-reader-box flex flex-col justify-between h-full">
-            {renderSubgraphGraph()}
+            <div className="quick-metric">
+              <span className="metric-label">Clinical Entities</span>
+              <span className="metric-val">{analysisResult.entities.length}</span>
+            </div>
           </div>
         )}
+
+        {/* Bottom half: Subgraph Graph */}
+        <div className="nlp-reader-box flex-col justify-between flex-1 flex min-h-0">
+          {renderSubgraphGraph()}
+        </div>
       </div>
 
       {/* RIGHT COLUMN: Annotation & Mapping Editor */}

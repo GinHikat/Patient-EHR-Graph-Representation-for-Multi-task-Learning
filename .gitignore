@@ -30,6 +30,7 @@ modules/extend/model/statedict/*
 .gitnexus
 *.vscode 
 Note/
+VAR/
 
 AGENTS.md
 CLAUDE.md

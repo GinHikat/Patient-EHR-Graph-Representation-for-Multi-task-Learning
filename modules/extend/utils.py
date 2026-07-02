@@ -150,7 +150,7 @@ class EntityExtractor:
         if lang == "en":
             if self._doc_classifier_en is None:
                 # English model: PLMICDModel (trained with LAAT head)
-                from modules.extend.model.plmicd_model import PLMICDModel
+                from modules.extend.model.training.plmicd_model import PLMICDModel
                 model_name = "yikuan8/Clinical-Longformer"
                 self._doc_classifier_en = PLMICDModel(num_labels=len(classes), model_name=model_name)
                 
@@ -186,7 +186,7 @@ class EntityExtractor:
         else:
             if self._doc_classifier_vi is None:
                 # Vietnamese model: PLMICDModel
-                from modules.extend.model.plmicd_model import PLMICDModel
+                from modules.extend.model.training.plmicd_model import PLMICDModel
                 self._doc_classifier_vi = PLMICDModel(num_labels=len(classes), model_name="vihealthbert")
                 state_dict = load_file(os.path.join(model_dir, "model.safetensors"))
                 state_dict = {k.replace("module.", ""): v for k, v in state_dict.items()}
