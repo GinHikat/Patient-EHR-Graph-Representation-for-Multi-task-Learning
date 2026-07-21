@@ -200,7 +200,6 @@ def collate_outpatient_nodes(categories_list: list[str], cat_to_icds: dict,
 
     return padded, mask
 
-
 ICU_UNIT_VOCAB = {
     'medical intensive care unit (micu)': 1,
     'surgical intensive care unit (sicu)': 2,

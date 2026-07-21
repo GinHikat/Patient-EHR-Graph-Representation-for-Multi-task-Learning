@@ -34,5 +34,10 @@ VAR/
 
 AGENTS.md
 CLAUDE.md
+learn.md
 
 Report/
+
+# Force include docs assets for GitHub Pages showcase
+!docs/assets/
+!docs/assets/*

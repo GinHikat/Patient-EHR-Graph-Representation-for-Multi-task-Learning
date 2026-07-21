@@ -354,9 +354,13 @@ _vihealthbert_tokenizer = None
 _external_kg_cache = None
 
 def extract_entities_dl(text: str, threshold: float = 0.5, model_length: str = "auto") -> dict:
+    global _dl_extractor
     from modules.extend.utils import EntityExtractor
-    extractor = EntityExtractor(mode="doc_class")
-    df = extractor.extract(text, threshold=threshold, dl_model=model_length)
+    
+    if _dl_extractor is None:
+        _dl_extractor = EntityExtractor(mode="doc_class")
+        
+    df = _dl_extractor.extract(text, threshold=threshold, dl_model=model_length)
     
     entities = []
     if not df.empty:

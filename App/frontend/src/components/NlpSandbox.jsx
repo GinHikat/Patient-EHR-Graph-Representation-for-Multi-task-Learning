@@ -36,6 +36,10 @@ const SAMPLE_NOTES = [
   {
     title: "Complex Case (Relations)",
     text: "A 65-year-old male with a history of persistent atrial fibrillation and symptomatic heart failure was started on amiodarone and carvedilol. While carvedilol effectively managed his heart failure, the amiodarone induced severe pulmonary toxicity and thyroid dysfunction. Consequently, levothyroxine was prescribed to resolve the hypothyroidism, and amiodarone was halted to prevent further respiratory decline."
+  },
+  {
+    title: "Case 5 (Vietnamese)",
+    text: "thuốc điều trị nhồi máu cơ tim cấp thuốc chống kết tập tiểu cầu : aspirin , clopidogrel hoặc cả hai ( prasugrel hoặc ticagrelor là những lựa chọn thay thế cho clopidogrel ) ."
   }
 ];
 

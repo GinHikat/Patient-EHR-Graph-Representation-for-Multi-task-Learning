@@ -22,7 +22,7 @@ class NlpAnalyzeRequest(BaseModel):
     text: str
     method: Optional[str] = "hybrid"
     threshold: Optional[float] = 0.5
-    ner_model: Optional[str] = "vihealthbert"
+    ner_model: Optional[str] = "phobert"
     ner_lang: Optional[str] = "vi"
     dl_model: Optional[str] = "auto"
 

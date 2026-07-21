@@ -239,6 +239,177 @@ body {
   font-size: 1rem;
 }
 
+/* Big Stats Cards */
+.big-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 2rem;
+  margin-bottom: 2.5rem;
+}
+
+.big-stat-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  padding: 2.5rem;
+  text-align: center;
+  transition: all 0.3s ease;
+}
+
+.big-stat-card.glow-teal:hover {
+  border-color: var(--accent-teal);
+  box-shadow: 0 0 30px rgba(0, 229, 255, 0.25);
+}
+
+.big-stat-card.glow-purple:hover {
+  border-color: var(--accent-purple);
+  box-shadow: 0 0 30px rgba(139, 92, 246, 0.25);
+}
+
+.stat-label {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  letter-spacing: 1.5px;
+  display: block;
+}
+
+.stat-number {
+  font-size: 3.8rem;
+  font-weight: 800;
+  display: block;
+  margin: 0.25rem 0;
+}
+
+.glow-teal .stat-number {
+  color: var(--accent-teal);
+  text-shadow: 0 0 20px rgba(0, 229, 255, 0.4);
+}
+
+.glow-purple .stat-number {
+  color: var(--accent-purple);
+  text-shadow: 0 0 20px rgba(139, 92, 246, 0.4);
+}
+
+.stat-sub {
+  color: var(--text-muted);
+  font-size: 0.95rem;
+}
+
+/* Stats Detail List Grid */
+.stats-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 2rem;
+  margin-bottom: 2rem;
+}
+
+.detail-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  padding: 2rem;
+  border-radius: 12px;
+}
+
+.detail-card h3 {
+  font-size: 1.25rem;
+  margin-bottom: 1.25rem;
+  color: var(--text-main);
+}
+
+.stats-list {
+  list-style: none;
+}
+
+.stats-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.stats-list li:last-child {
+  border-bottom: none;
+}
+
+.list-key {
+  color: var(--text-muted);
+  font-size: 0.95rem;
+}
+
+.list-val {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: var(--accent-teal);
+}
+
+.badge-val-teal { color: var(--accent-teal); }
+.badge-val-purple { color: var(--accent-purple); }
+.badge-val-green { color: var(--accent-green); }
+
+/* Stats Image Showcase */
+.stats-image-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 2rem;
+  text-align: center;
+}
+
+.stats-image-card h3 {
+  margin-bottom: 1.25rem;
+  font-size: 1.3rem;
+}
+
+.image-wrapper img {
+  max-width: 100%;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+}
+
+/* Visualizations Gallery Grid */
+.vis-gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 2rem;
+}
+
+.vis-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  overflow: hidden;
+  transition: transform 0.3s ease, border-color 0.3s ease;
+}
+
+.vis-card:hover {
+  transform: translateY(-6px);
+  border-color: var(--accent-teal);
+  box-shadow: 0 12px 32px rgba(0, 229, 255, 0.2);
+}
+
+.vis-img-box img {
+  width: 100%;
+  height: 320px;
+  object-fit: cover;
+  display: block;
+}
+
+.vis-caption {
+  padding: 1.5rem;
+}
+
+.vis-caption h3 {
+  font-size: 1.2rem;
+  margin-bottom: 0.5rem;
+}
+
+.vis-caption p {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
 /* Metric Section */
 .metric-cards-grid {
   display: grid;
@@ -431,6 +602,9 @@ body {
 
 /* Responsive */
 @media (max-width: 900px) {
+  .big-stats-grid, .stats-detail-grid, .vis-gallery-grid {
+    grid-template-columns: 1fr;
+  }
   .metric-cards-grid, .pipeline-steps-grid {
     grid-template-columns: 1fr 1fr;
   }

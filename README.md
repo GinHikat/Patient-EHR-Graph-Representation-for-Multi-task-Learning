@@ -16,15 +16,6 @@
 
 ---
 
-## 📢 News & Milestones
-
-- **[2026-07-21]** 🚀 **Full-Stack Clinical Platform Deployed**: Deployed interactive React + Vite frontend visualization workbench to Vercel paired with FastAPI ASGI backend services!
-- **[2026-07-15]** 📊 **SOTA Clinical Benchmarks**: Achieved **0.99 AUROC (0.79 AUPR)** in patient mortality prediction and **0.89 AUROC** in readmission prediction on MIMIC-IV benchmarking.
-- **[2026-06-30]** 🕸️ **Heterogeneous Neo4j Graph Integration**: Ingested patient admissions, transfers, lab events, and prescriptions linked to external disease-disease and drug ontologies.
-- **[2026-06-01]** 🧬 **Graph Attention Network (GAT) Embeddings**: Integrated GAT representation learning to enrich clinical event representations before temporal sequence modeling.
-
----
-
 ## 💡 Abstract & System Architecture
 
 Translating patient Electronic Health Records (EHR) into predictive clinical models requires capturing both static semantic relationships (drug interactions, disease hierarchies) and temporal dynamic sequences (admission events, lab trends).
@@ -43,6 +34,42 @@ Translating patient Electronic Health Records (EHR) into predictive clinical mod
 | **Layer 1** | **Heterogeneous Knowledge Graph** | Integrates internal patient EHR records (admissions, transfers, lab events, prescriptions) with external ontologies (drug-drug, disease-disease). |
 | **Layer 2** | **GNN / GAT Representation Learning** | Leverages Graph Attention Networks (GAT) to enrich admission and clinical event representations with semantic graph embeddings. |
 | **Layer 3** | **Temporal Sequence Modeling** | Aligns events chronologically into dense patient timelines (`patient_timelines.pt`) for multi-task mortality, readmission, and prescription prediction. |
+
+---
+
+## 🕸️ Knowledge Graph Scale & Statistics
+
+Our constructed Clinical Knowledge Graph scales across **11.4 Million+ Nodes** and **28.2 Million+ Edges**, establishing a comprehensive semantic network linking patient EHR records with medical ontologies:
+
+<div align="center">
+
+| Metric | Scale Count | Description |
+| :--- | :---: | :--- |
+| 🌐 **Total Graph Nodes** | **11,469,116** | Combined MIMIC-IV clinical entities & external ontology nodes |
+| 🔗 **Total Graph Edges** | **28,276,419** | Semantic relations connecting admissions, diagnoses, labs & drugs |
+| 🏥 **MIMIC Clinical Nodes** | **11,032,862** | Patient admissions, transfers, lab events, prescriptions |
+| 📚 **External Ontology Nodes** | **238,628** | Disease-disease interactions, drug-drug pathways, phenotypes |
+
+
+</div>
+
+
+
+---
+
+## 🎨 Knowledge Graph Visualizations
+
+<div align="center">
+
+### Connected Patient Graph with External Knowledge Graph
+<img src="docs/assets/connected_patient_graph_with_external_kg.png" width="850"/>
+
+<br/><br/>
+
+### Full Subgraph for a Patient
+<img src="docs/assets/full_subgraph_for_a_patient.png" width="850"/>
+
+</div>
 
 ---
 
@@ -73,6 +100,9 @@ Patient-EHR-Graph/
 │   ├── backend/                  # FastAPI ASGI Server
 │   └── frontend/                 # React + Vite UI Workbench
 ├── data/                         # Local Data Storage & Artifacts (Ignored / Cached)
+├── docs/                         # GitHub Pages Interactive Showcase Site
+│   ├── assets/                   # Graph visual outputs & statistics graphics
+│   └── index.html                # Interactive Web Demo UI
 ├── modules/                      # Business Logic & Pipeline Architecture
 │   ├── dataset_preprocessing/    # Preprocessing Pipelines
 │   │   ├── external/             # Mappings for external medical ontologies 
@@ -159,4 +189,4 @@ npm run dev
 
 ## 📜 Citation
 
-> Currently no, but hopefully will!
+> Currently no academic paper citation yet, but hopefully will be published soon!

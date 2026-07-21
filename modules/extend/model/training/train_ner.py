@@ -116,6 +116,60 @@ def compute_metrics(p):
         "f1": f1_score(true_labels, true_predictions),
     }
 
+import torch.nn as nn
+import torch.nn.functional as F
+
+class FocalLoss(nn.Module):
+    def __init__(self, gamma=2.0, alpha=None, ignore_index=-100):
+        super(FocalLoss, self).__init__()
+        self.gamma = gamma
+        self.alpha = alpha
+        self.ignore_index = ignore_index
+
+    def forward(self, inputs, targets):
+        ce_loss = F.cross_entropy(inputs, targets, reduction='none', ignore_index=self.ignore_index)
+        pt = torch.exp(-ce_loss)
+        focal_loss = ((1 - pt) ** self.gamma) * ce_loss
+        
+        if self.alpha is not None:
+            if isinstance(self.alpha, torch.Tensor):
+                alpha_t = self.alpha.gather(0, targets.masked_fill(targets == self.ignore_index, 0))
+                focal_loss = alpha_t * focal_loss
+            else:
+                focal_loss = self.alpha * focal_loss
+
+        mask = targets != self.ignore_index
+        return focal_loss[mask].mean() if mask.any() else focal_loss.sum()
+
+class FocalLossTrainer(Trainer):
+    def __init__(self, *args, gamma=2.0, alpha=None, **kwargs):
+        self.gamma = gamma
+        self.alpha = alpha
+        super().__init__(*args, **kwargs)
+        
+        if self.alpha is not None:
+            self.alpha = torch.tensor(self.alpha, dtype=torch.float32).to(self.args.device)
+            
+        self.focal_loss = FocalLoss(gamma=self.gamma, alpha=self.alpha, ignore_index=-100)
+
+    def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+        labels = inputs.pop("labels")
+        outputs = model(**inputs)
+        logits = outputs.logits
+        
+        active_loss = inputs.get("attention_mask", None)
+        num_labels = logits.shape[-1]
+        if active_loss is not None:
+            active_loss = active_loss.view(-1) == 1
+            active_logits = logits.view(-1, num_labels)[active_loss]
+            active_labels = labels.view(-1)[active_loss]
+        else:
+            active_logits = logits.view(-1, num_labels)
+            active_labels = labels.view(-1)
+            
+        loss = self.focal_loss(active_logits, active_labels)
+        return (loss, outputs) if return_outputs else loss
+
 def main():
     model_name = "demdecuong/vihealthbert-base-word"
     output_dir = r"models\vihealthbert_ner"
@@ -163,12 +217,13 @@ def main():
         dataloader_num_workers=2,  
     )
     
-    trainer = Trainer(
+    trainer = FocalLossTrainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset,
         eval_dataset=dev_dataset,
         compute_metrics=compute_metrics,
+        gamma=2.0
     )
     
     print("\nStarting Training...")

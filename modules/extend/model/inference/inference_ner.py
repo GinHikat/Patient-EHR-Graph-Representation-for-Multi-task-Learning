@@ -79,7 +79,29 @@ class NER:
                 aggregation_strategy="simple" 
             )
         
-        raw_results = _PIPELINES[pipeline_key](text)
+        # Chunk text to avoid exceeding max sequence length (typically 512 tokens)
+        # which causes CUDA device-side assert errors
+        raw_results = []
+        for line in text.split('\n'):
+            if not line.strip(): 
+                continue
+            
+            line_chunks = []
+            while len(line) > 1500:
+                split_idx = line.rfind(' ', 0, 1500)
+                if split_idx == -1: 
+                    split_idx = 1500
+                line_chunks.append(line[:split_idx])
+                line = line[split_idx:]
+            if line:
+                line_chunks.append(line)
+                
+            for chunk in line_chunks:
+                if chunk.strip():
+                    try:
+                        raw_results.extend(_PIPELINES[pipeline_key](chunk))
+                    except Exception as e:
+                        print(f"Skipping a chunk due to inference error: {e}")
         entities = []
         
         # Chronological pointer to search through the original text

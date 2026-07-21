@@ -22,8 +22,10 @@
       </a>
       <div class="nav-links">
         <a href="#overview">Overview</a>
+        <a href="#graph-stats">Graph Scale</a>
+        <a href="#visualizations">Graph Gallery</a>
         <a href="#benchmarks">Benchmarks</a>
-        <a href="#pipeline">Pipeline Architecture</a>
+        <a href="#pipeline">Pipeline</a>
         <a href="#webapp">Live Web App</a>
         <a href="https://github.com/GinHikat/Patient-EHR-Graph-Representation-for-Multi-task-Learning" target="_blank" class="nav-btn github-btn">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
@@ -37,9 +39,9 @@
   <header id="overview" class="hero-section">
     <div class="hero-content">
       <div class="badge-row">
-        <span class="badge badge-teal">0.99 AUROC Mortality</span>
-        <span class="badge badge-purple">Graph Attention Networks</span>
-        <span class="badge badge-green">MIMIC-IV EHR</span>
+        <span class="badge badge-teal">11.4M+ Graph Nodes</span>
+        <span class="badge badge-purple">28.2M+ Graph Edges</span>
+        <span class="badge badge-green">0.99 AUROC Mortality</span>
       </div>
       <h1 class="hero-title">Patient EHR Graph Representation <span class="gradient-text">for Multi-Task Learning</span></h1>
       <p class="hero-subtitle">
@@ -50,10 +52,128 @@
         <a href="https://patient-ehr-graph.vercel.app" target="_blank" class="btn btn-primary">
           🚀 Open Live Vercel App
         </a>
-        <a href="#pipeline" class="btn btn-secondary">Explore Graph Pipeline</a>
+        <a href="#graph-stats" class="btn btn-secondary">Explore Graph Scale & Stats</a>
       </div>
     </div>
   </header>
+
+  <!-- Graph Statistics & Scale Section -->
+  <section id="graph-stats" class="section stats-section">
+    <div class="section-container">
+      <div class="section-header">
+        <h2 class="section-title">Knowledge Graph Scale & Statistics</h2>
+        <p class="section-subtitle">A massive clinical semantic network spanning over 11.4 million nodes and 28.2 million edges.</p>
+      </div>
+
+      <div class="big-stats-grid">
+        <div class="big-stat-card glow-teal">
+          <span class="stat-label">TOTAL NODES</span>
+          <span class="stat-number">11,469,116</span>
+          <span class="stat-sub">Clinical Entities & Ontologies</span>
+        </div>
+        <div class="big-stat-card glow-purple">
+          <span class="stat-label">TOTAL EDGES</span>
+          <span class="stat-number">28,276,419</span>
+          <span class="stat-sub">Semantic Relations & Links</span>
+        </div>
+      </div>
+
+      <!-- Detail Hierarchy & Relationship Grid -->
+      <div class="stats-detail-grid">
+        <div class="detail-card">
+          <h3>Node Types Hierarchy</h3>
+          <ul class="stats-list">
+            <li>
+              <span class="list-key">MIMIC Patient Entities</span>
+              <span class="list-val badge-val-teal">11,032,862</span>
+            </li>
+            <li>
+              <span class="list-key">External Medical Ontologies</span>
+              <span class="list-val badge-val-purple">238,628</span>
+            </li>
+            <li>
+              <span class="list-key">ICD Diagnoses</span>
+              <span class="list-val badge-val-green">772</span>
+            </li>
+          </ul>
+        </div>
+
+        <div class="detail-card">
+          <h3>Relationship Types Distribution</h3>
+          <ul class="stats-list">
+            <li>
+              <span class="list-key"><code>HAS_DIAGNOSIS</code></span>
+              <span class="list-val">8,324,544</span>
+            </li>
+            <li>
+              <span class="list-key"><code>HAS_LAB</code></span>
+              <span class="list-val">5,952,167</span>
+            </li>
+            <li>
+              <span class="list-key"><code>HAS_TRANSFER</code></span>
+              <span class="list-val">1,532,893</span>
+            </li>
+            <li>
+              <span class="list-key"><code>OUTPATIENT_TEST</code></span>
+              <span class="list-val">1,529,706</span>
+            </li>
+            <li>
+              <span class="list-key"><code>CHILD_OF</code> (Ontology)</span>
+              <span class="list-val">299,180</span>
+            </li>
+            <li>
+              <span class="list-key"><code>CAUSE</code> (Disease Link)</span>
+              <span class="list-val">108,867</span>
+            </li>
+            <li>
+              <span class="list-key"><code>HAS_ICUSTAY</code></span>
+              <span class="list-val">62,445</span>
+            </li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- Graph Statistics Screenshot Showcase Card -->
+      <div class="stats-image-card" style="margin-top: 2rem;">
+        <h3>Live Neo4j Graph Statistics Dashboard</h3>
+        <div class="image-wrapper">
+          <img src="assets/graph_statistics.png" alt="Neo4j Graph Statistics Dashboard" />
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Graph Visualizations Gallery -->
+  <section id="visualizations" class="section gallery-section">
+    <div class="section-container">
+      <div class="section-header">
+        <h2 class="section-title">Knowledge Graph Visualizations</h2>
+        <p class="section-subtitle">Visualizing patient entity subgraphs and external medical knowledge alignment.</p>
+      </div>
+
+      <div class="vis-gallery-grid">
+        <div class="vis-card">
+          <div class="vis-img-box">
+            <img src="assets/connected_patient_graph_with_external_kg.png" alt="Connected Patient graph with external KG" />
+          </div>
+          <div class="vis-caption">
+            <h3>Connected Patient Graph with External KG</h3>
+            <p>Illustrates the interconnected patient clinical trajectory aligned with external drug-drug interactions and disease causal ontologies.</p>
+          </div>
+        </div>
+
+        <div class="vis-card">
+          <div class="vis-img-box">
+            <img src="assets/full_subgraph_for_a_patient.png" alt="Full subgraph for a Patient" />
+          </div>
+          <div class="vis-caption">
+            <h3>Full Subgraph for a Patient</h3>
+            <p>Detailed view of a single patient cohort subgraph, showcasing temporal admissions, ICU transfers, lab events, and prescription nodes.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
 
   <!-- Performance Highlights Dashboard -->
   <section id="benchmarks" class="section metric-section">
