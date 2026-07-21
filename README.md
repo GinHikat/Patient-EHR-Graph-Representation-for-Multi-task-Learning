@@ -49,11 +49,23 @@ Our constructed Clinical Knowledge Graph scales across **11.4 Million+ Nodes** a
 | 🔗 **Total Graph Edges** | **28,276,419** | Semantic relations connecting admissions, diagnoses, labs & drugs |
 | 🏥 **MIMIC Clinical Nodes** | **11,032,862** | Patient admissions, transfers, lab events, prescriptions |
 | 📚 **External Ontology Nodes** | **238,628** | Disease-disease interactions, drug-drug pathways, phenotypes |
-
+| 🩺 **ICD Diagnosis Nodes** | **772** | Standardized medical diagnosis classifications |
 
 </div>
 
+<div align="center">
 
+| Relationship Type | Edge Count | Clinical Description |
+| :--- | :---: | :--- |
+| `HAS_DIAGNOSIS` | **8,324,544** | Links patient admissions to diagnosed ICD disease codes |
+| `HAS_LAB` | **5,952,167** | Connects admissions to laboratory test measurements |
+| `HAS_TRANSFER` | **1,532,893** | ICU and hospital ward transfer progression |
+| `OUTPATIENT_TEST` | **1,529,706** | Outpatient clinic test results & procedures |
+| `CHILD_OF` | **299,180** | Ontological disease hierarchy relationships |
+| `CAUSE` | **108,867** | Causal connections between disease mechanisms |
+| `HAS_ICUSTAY` | **62,445** | Intensive Care Unit stay records |
+
+</div>
 
 ---
 
@@ -120,6 +132,7 @@ Patient-EHR-Graph/
 │       ├── temporal_sequence_setup/ # Aligning temporal admission events into timeline sequences
 │       └── training/             # Multi-task outcome models 
 ├── shared_functions/             # Global Helper Utilities & Third-Party APIs
+├── VAR/                          # Vietnamese Clinical Entity Extraction Pipeline
 ├── .env.example                  # Environment configuration template
 ├── requirements.txt              # Python dependencies
 └── README.md                     # Project documentation
@@ -184,6 +197,14 @@ npm run dev
 ```
 
 *Frontend workbench runs at `http://localhost:5173` or access live deployment at `https://patient-ehr-graph.vercel.app`*
+
+---
+
+## 🚀 Current Progress & Future Roadmap: Vietnamese EHR Graph Bridge
+ **Vietnamese Clinical Entity Extraction**:
+  - Processing unstructured Vietnamese clinical notes to extract 5 core entity labels: `CHẨN_ĐOÁN` (Diagnosis), `THUỐC` (Medication), `TÊN_XÉT_NGHIỆM` (Procedure), `TRIỆU_CHỨNG` (Symptom), and `KẾT_QUẢ_XÉT_NGHIỆM` (Lab Result).
+  - Fine-tuning **Clinical BERT NER** for entity boundary detection and **SapBERT** for zero-shot cosine similarity linking to international ontologies (**ICD-10** & **RxNorm**).
+  - Building a cross-lingual bridge to construct the **Vietnamese Clinical EHR Knowledge Graph**.
 
 ---
 

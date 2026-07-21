@@ -91,10 +91,6 @@
               <span class="list-key">External Medical Ontologies</span>
               <span class="list-val badge-val-purple">238,628</span>
             </li>
-            <li>
-              <span class="list-key">ICD Diagnoses</span>
-              <span class="list-val badge-val-green">772</span>
-            </li>
           </ul>
         </div>
 
@@ -143,18 +139,21 @@
     </div>
   </section>
 
-  <!-- Graph Visualizations Gallery -->
+      <!-- Graph Visualizations Gallery -->
   <section id="visualizations" class="section gallery-section">
     <div class="section-container">
       <div class="section-header">
         <h2 class="section-title">Knowledge Graph Visualizations</h2>
-        <p class="section-subtitle">Visualizing patient entity subgraphs and external medical knowledge alignment.</p>
+        <p class="section-subtitle">Click any visualization figure below to inspect high-resolution graph details.</p>
       </div>
 
       <div class="vis-gallery-grid">
         <div class="vis-card">
           <div class="vis-img-box">
-            <img src="assets/connected_patient_graph_with_external_kg.png" alt="Connected Patient graph with external KG" />
+            <img src="assets/connected_patient_graph_with_external_kg.png" alt="Connected Patient graph with external KG" class="zoomable-img" />
+            <div class="image-overlay">
+              <button class="zoom-btn">🔍 Click to Expand High-Res</button>
+            </div>
           </div>
           <div class="vis-caption">
             <h3>Connected Patient Graph with External KG</h3>
@@ -164,7 +163,10 @@
 
         <div class="vis-card">
           <div class="vis-img-box">
-            <img src="assets/full_subgraph_for_a_patient.png" alt="Full subgraph for a Patient" />
+            <img src="assets/full_subgraph_for_a_patient.png" alt="Full subgraph for a Patient" class="zoomable-img" />
+            <div class="image-overlay">
+              <button class="zoom-btn">🔍 Click to Expand High-Res</button>
+            </div>
           </div>
           <div class="vis-caption">
             <h3>Full Subgraph for a Patient</h3>
@@ -180,7 +182,7 @@
     <div class="section-container">
       <div class="section-header">
         <h2 class="section-title">Clinical Benchmark Performance</h2>
-        <p class="section-subtitle">Evaluated on MIMIC-IV patient admissions and benchmarked against 9 recent SOTA clinical ML models (2022–2025).</p>
+        <p class="section-subtitle">Evaluated on MIMIC-IV patient admissions and benchmarked against 9 recent SOTA EHR models (2022–2025).</p>
       </div>
 
       <div class="metric-cards-grid">
@@ -206,9 +208,13 @@
         </div>
       </div>
 
-      <!-- SOTA Comparison Interactive Table -->
-      <div class="table-card">
-        <h3>SOTA Clinical ML Comparison Table</h3>
+      <!-- SOTA Comparison Compact Table Card -->
+      <div class="table-card zoomable-box" id="sota-table-card" style="position: relative; cursor: pointer;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+          <h3>SOTA Clinical ML Comparison Table</h3>
+          <button class="zoom-btn" id="zoom-table-btn">🔍 Click to Expand Full Metrics & Citations</button>
+        </div>
+        
         <div class="table-responsive">
           <table class="sota-table">
             <thead>
@@ -234,7 +240,7 @@
                 <td>Daphne et al. (2025)</td>
                 <td>0.93</td>
                 <td>0.65</td>
-                <td>0.95</td>
+                <td><span class="badge-score">0.95</span></td>
                 <td>0.75</td>
                 <td>—</td>
               </tr>
@@ -260,7 +266,7 @@
                 <td>—</td>
                 <td>—</td>
                 <td>—</td>
-                <td>0.88</td>
+                <td><span class="badge-score">0.88</span></td>
               </tr>
             </tbody>
           </table>
@@ -339,6 +345,25 @@
     </div>
   </section>
 
+  <!-- Ongoing & Future Roadmap Section -->
+  <section id="roadmap" class="section roadmap-section">
+    <div class="section-container">
+      <div class="section-header">
+        <h2 class="section-title">Current Progress & Future Roadmap: Vietnamese EHR Graph Bridge</h2>
+        <p class="section-subtitle">Vietnamese Clinical Entity Extraction & Multilingual EHR Graph Bridge.</p>
+      </div>
+
+      <div class="detail-card">
+        <h3>Vietnamese Clinical Entity Extraction</h3>
+        <ul style="color: var(--text-muted); font-size: 0.88rem; margin-top: 0.75rem; padding-left: 1.25rem; line-height: 1.7;">
+          <li>Processing unstructured Vietnamese clinical notes to extract 5 core entity labels: <code>CHẨN_ĐOÁN</code> (Diagnosis), <code>THUỐC</code> (Medication), <code>TÊN_XÉT_NGHIỆM</code> (Procedure), <code>TRIỆU_CHỨNG</code> (Symptom), and <code>KẾT_QUẢ_XÉT_NGHIỆM</code> (Lab Result).</li>
+          <li>Fine-tuning <strong>Clinical BERT NER</strong> for entity boundary detection and <strong>SapBERT</strong> for zero-shot cosine similarity linking to international ontologies (<strong>ICD-10</strong> & <strong>RxNorm</strong>).</li>
+          <li>Building a cross-lingual bridge to construct the <strong>Vietnamese Clinical EHR Knowledge Graph</strong>.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
   <!-- Citation Notice -->
   <section class="section citation-section">
     <div class="section-container text-center">
@@ -348,6 +373,12 @@
       </div>
     </div>
   </section>
+
+  <!-- Lightbox Modal for High-Res Figure Inspection -->
+  <div id="lightbox" class="lightbox">
+    <span id="lightbox-close" class="lightbox-close">&times;</span>
+    <img id="lightbox-img" class="lightbox-content" src="" alt="Expanded Graph Visualization" />
+  </div>
 
   <!-- Footer -->
   <footer class="footer">
