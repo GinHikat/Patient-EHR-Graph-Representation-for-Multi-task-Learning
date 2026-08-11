@@ -2,22 +2,27 @@
 @import url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Sora:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap");
 
 :root {
-  /* BCCC Design Tokens - Dark Theme (Obsidian Biotech) */
-  --bg-color: #040712;
-  --panel-bg: rgba(7, 12, 28, 0.72);
-  --panel-border: rgba(0, 242, 254, 0.16);
-  --panel-border-pulse: rgba(161, 84, 255, 0.2);
-  --text-main: #f1f5f9;
-  --text-muted: #8292aa;
+  /* ==========================================================================
+     IMPECCABLE DESIGN SYSTEM — Multiplane Cel Dawn Theme
+     Layered Parallax Cel Depth, Warm Dawn Sky Canvas, Celestial Sunrise Accents
+     ========================================================================== */
+
+  /* Multiplane Cel Dark Canvas (Twilight Dawn) */
+  --bg-color: #0d1117;
+  --panel-bg: rgba(22, 27, 36, 0.78);
+  --panel-border: rgba(255, 160, 122, 0.22);
+  --panel-border-pulse: rgba(139, 92, 246, 0.35);
+  --text-main: #f8fafc;
+  --text-muted: #94a3b8;
   
-  /* Glowing Bioluminescent Colorway */
-  --accent-color: #00d8f6;     /* Neon Cyan (softer for readability) */
-  --accent-hover: #38bdf8;     /* Sky Cyan */
-  --accent-purple: #a154ff;    /* Cyber Purple */
-  --accent-teal: #00e5c9;      /* Softer Bio Green/Teal */
-  --accent-rose: #ff2a5f;      /* Clinical Warning Red */
-  --accent-amber: #ffb000;     /* Medication Amber */
-  --danger-color: #ff2a5f;
+  /* Multiplane Cel Celestial Palette */
+  --accent-color: #38bdf8;     /* Dawn Horizon Azure */
+  --accent-hover: #0ea5e9;     /* Sky Azure */
+  --accent-purple: #a78bfa;    /* Twilight Orchid */
+  --accent-teal: #34d399;      /* Morning Emerald Leaf */
+  --accent-rose: #ff6b6b;      /* Sunrise Coral Red */
+  --accent-amber: #ffa07a;     /* Golden Sunrise Amber */
+  --danger-color: #ff6b6b;
   
   /* Typography */
   --font-display: "Sora", system-ui, sans-serif;
@@ -28,35 +33,42 @@
   color: var(--text-main);
   background-color: var(--bg-color);
   
-  /* Smooth console Transitions */
+  /* Smooth multiplane cel layer transitions */
   transition: background-color 0.4s cubic-bezier(0.16, 1, 0.3, 1), color 0.4s cubic-bezier(0.16, 1, 0.3, 1);
 
-  /* BCCC Medical Instrument Grid Backdrop */
-  --body-gradient: radial-gradient(circle at 50% 50%, #0c1224 0%, #03050c 100%);
-  --micro-grid: linear-gradient(rgba(0, 242, 254, 0.015) 1px, transparent 1px),
-                linear-gradient(90deg, rgba(0, 242, 254, 0.015) 1px, transparent 1px);
+  /* Multiplane Atmospheric Parallax Depth Backdrop */
+  --body-gradient: 
+    radial-gradient(circle at 15% 20%, rgba(255, 107, 107, 0.12) 0%, transparent 45%),
+    radial-gradient(circle at 85% 15%, rgba(255, 160, 122, 0.14) 0%, transparent 40%),
+    radial-gradient(circle at 50% 80%, rgba(139, 92, 246, 0.1) 0%, transparent 50%),
+    linear-gradient(180deg, #111722 0%, #090c12 100%);
+  --micro-grid: linear-gradient(rgba(255, 160, 122, 0.02) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255, 160, 122, 0.02) 1px, transparent 1px);
 }
 
 .light-theme {
-  /* BCCC Design Tokens - Light Theme (Surgical Clinical) */
-  --bg-color: #f8fafc;
-  --panel-bg: rgba(255, 255, 255, 0.38);
-  --panel-border: rgba(148, 163, 184, 0.35);
-  --panel-border-pulse: rgba(100, 116, 139, 0.2);
-  --text-main: #0f172a;
-  --text-muted: #475569;
+  /* Multiplane Cel Dawn — Soft Sunrise Daylight Mode */
+  --bg-color: #faf6f0;
+  --panel-bg: rgba(255, 255, 255, 0.78);
+  --panel-border: rgba(224, 160, 130, 0.35);
+  --panel-border-pulse: rgba(139, 92, 246, 0.25);
+  --text-main: #1c1917;
+  --text-muted: #64748b;
   
-  --accent-color: #0284c7;     /* Safe Blue */
-  --accent-hover: #0369a1;     /* Dark Blue */
-  --accent-purple: #7c3aed;    /* Deep Purple */
-  --accent-teal: #0d9488;      /* Safe Emerald */
-  --accent-rose: #dc2626;      /* Warning Red */
-  --accent-amber: #d97706;     /* Medication Amber */
-  --danger-color: #dc2626;
+  --accent-color: #0284c7;     /* Sky Azure */
+  --accent-hover: #0369a1;     /* Deep Sky */
+  --accent-purple: #7c3aed;    /* Twilight Orchid */
+  --accent-teal: #059669;      /* Morning Emerald Leaf */
+  --accent-rose: #e11d48;      /* Sunrise Coral */
+  --accent-amber: #d97706;     /* Golden Sunrise Amber */
+  --danger-color: #e11d48;
 
-  --body-gradient: radial-gradient(circle at 50% 50%, #ffffff 0%, #e2e8f0 100%);
-  --micro-grid: linear-gradient(rgba(15, 23, 42, 0.02) 1px, transparent 1px),
-                linear-gradient(90deg, rgba(15, 23, 42, 0.02) 1px, transparent 1px);
+  --body-gradient: 
+    radial-gradient(circle at 20% 15%, rgba(255, 107, 107, 0.12) 0%, transparent 45%),
+    radial-gradient(circle at 80% 20%, rgba(255, 160, 122, 0.18) 0%, transparent 45%),
+    linear-gradient(180deg, #fefcf9 0%, #f4ede4 100%);
+  --micro-grid: linear-gradient(rgba(28, 25, 23, 0.025) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(28, 25, 23, 0.025) 1px, transparent 1px);
 }
 
 body {
@@ -2028,4 +2040,73 @@ body::before {
   background: rgba(130, 146, 170, 0.12);
   color: var(--text-muted);
   border: 1px solid rgba(130, 146, 170, 0.35);
+}
+
+/* ==========================================================================
+   IMPECCABLE POLISH — Luminescent Monospace Badges & Glass Utilities
+   ========================================================================== */
+
+.mono-tag, .mono-id, .hadmn-tag {
+  font-family: var(--font-mono);
+  letter-spacing: 0.5px;
+  font-weight: 600;
+}
+
+.mono-id {
+  background: rgba(0, 240, 255, 0.08);
+  color: var(--accent-color);
+  border: 1px solid rgba(0, 240, 255, 0.25);
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.hadmn-tag {
+  background: rgba(184, 124, 255, 0.08);
+  color: var(--accent-purple);
+  border: 1px solid rgba(184, 124, 255, 0.25);
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.glass-panel-glow {
+  background: var(--panel-bg);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--panel-border);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 0 15px rgba(0, 240, 255, 0.08);
+}
+
+.badge-patient {
+  background: rgba(0, 240, 255, 0.12);
+  color: #00f0ff;
+  border: 1px solid rgba(0, 240, 255, 0.35);
+}
+
+.badge-admission {
+  background: rgba(184, 124, 255, 0.12);
+  color: #b87cff;
+  border: 1px solid rgba(184, 124, 255, 0.35);
+}
+
+.badge-disease {
+  background: rgba(255, 51, 136, 0.12);
+  color: #ff3388;
+  border: 1px solid rgba(255, 51, 136, 0.35);
+}
+
+.badge-drug {
+  background: rgba(255, 209, 59, 0.12);
+  color: #ffd13b;
+  border: 1px solid rgba(255, 209, 59, 0.35);
+}
+
+.badge-lab {
+  background: rgba(0, 255, 157, 0.12);
+  color: #00ff9d;
+  border: 1px solid rgba(0, 255, 157, 0.35);
+}
+
+.badge-procedure {
+  background: rgba(56, 189, 248, 0.12);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.35);
 }

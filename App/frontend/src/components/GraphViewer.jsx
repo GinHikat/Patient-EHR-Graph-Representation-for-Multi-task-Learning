@@ -6,29 +6,29 @@ import { X, Filter, ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || "http://localhost:8000/api";
 
-// Predefined high-contrast palette for common EHR and CTD node types
+// Multiplane Cel Dawn — Celestial Entity Palette
 const TYPE_COLORS = {
-  Patient: "#3b82f6", // Blue
-  Admission: "#ec4899", // Pink (Encounter/Admission)
-  Result: "#06b6d4", // Cyan (Lab Result)
-  Lab: "#06b6d4", // Cyan (Lab Item)
-  Drug: "#fbbf24", // Amber (Medication/Drug)
-  Diagnosis: "#f43f5e", // Rose/Red (Condition/Disease)
-  Disease: "#f43f5e", // Rose/Red
-  Procedure: "#8b5cf6", // Violet (Procedure)
-  ICU: "#a855f7", // Purple (ICU Care)
-  Stay: "#a855f7", // Purple (ICU Stay)
-  Transfer: "#10b981", // Green (Transfers)
-  Observation: "#10b981", // Green
-  Encounter: "#ec4899", // Pink
-  LabResult: "#06b6d4", // Cyan
-  Medication: "#f97316", // Orange
-  Allergy: "#ef4444", // Red
-  Immunization: "#6366f1", // Indigo
-  Gene: "#fb7185", // Rose
-  Pathway: "#2dd4bf", // Teal
-  Chemical: "#facc15", // Yellow
-  Outpatient: "#fb923c", // Sleek Orange (Outpatient notes)
+  Patient: "#38bdf8",     /* Dawn Horizon Azure */
+  Admission: "#a78bfa",   /* Twilight Orchid */
+  Result: "#34d399",      /* Morning Emerald Leaf */
+  Lab: "#34d399",         /* Morning Emerald Leaf */
+  Drug: "#ffa07a",        /* Golden Sunrise Amber */
+  Diagnosis: "#ff6b6b",   /* Sunrise Coral Red */
+  Disease: "#ff6b6b",     /* Sunrise Coral Red */
+  Procedure: "#8b5cf6",   /* Twilight Violet */
+  ICU: "#a78bfa",         /* Twilight Orchid */
+  Stay: "#a78bfa",         /* Twilight Orchid */
+  Transfer: "#34d399",    /* Morning Emerald Leaf */
+  Observation: "#34d399", /* Morning Emerald Leaf */
+  Encounter: "#a78bfa",   /* Twilight Orchid */
+  LabResult: "#34d399",   /* Morning Emerald Leaf */
+  Medication: "#ffa07a",  /* Golden Sunrise Amber */
+  Allergy: "#ff6b6b",     /* Sunrise Coral Red */
+  Immunization: "#38bdf8",/* Dawn Horizon Azure */
+  Gene: "#ff6b6b",        /* Sunrise Coral Red */
+  Pathway: "#34d399",     /* Morning Emerald Leaf */
+  Chemical: "#ffa07a",    /* Golden Sunrise Amber */
+  Outpatient: "#f97316",  /* Golden Sunrise Amber */
 };
 
 // Generate high-contrast colors based on string
@@ -434,7 +434,7 @@ const GraphViewer = ({
 
         {showControls && (
           <div
-            className="controls-panel glass-panel animate-slide-right"
+            className="controls-panel glass-panel glass-panel-glow animate-slide-right"
             style={{ 
               width: "100%", 
               height: "100%", 
@@ -526,9 +526,9 @@ const GraphViewer = ({
         ref={fgRef}
         graphData={graphData}
         nodeLabel={(node) => `
-          <div style="background: rgba(0,0,0,0.9); padding: 12px; border-radius: 8px; font-family: Inter, sans-serif; box-shadow: 0 4px 20px rgba(0,0,0,0.5); min-width: 140px; border: 1px solid rgba(255,255,255,0.1);">
-             <div style="color: #60a5fa; font-size: 12px; font-weight: 600; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.8;">${getEffectiveLabel(node.labels)}</div>
-             <div style="font-weight: 700; color: white; font-size: 16px; line-height: 1.4;">${node.properties?.name || node.properties?.title || node.properties?.Title || node.id}</div>
+          <div style="background: rgba(3, 6, 17, 0.95); padding: 12px 16px; border-radius: 8px; font-family: 'Plus Jakarta Sans', sans-serif; box-shadow: 0 8px 32px rgba(0,0,0,0.8), 0 0 15px rgba(0, 240, 255, 0.3); min-width: 150px; border: 1px solid rgba(0, 240, 255, 0.4); backdrop-filter: blur(12px);">
+             <div style="color: #00f0ff; font-size: 11px; font-weight: 700; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 1px; font-family: 'JetBrains Mono', monospace;">${getEffectiveLabel(node.labels)}</div>
+             <div style="font-weight: 700; color: #f1f7ff; font-size: 15px; line-height: 1.4;">${node.properties?.name || node.properties?.title || node.properties?.Title || node.id}</div>
           </div>
         `}
         nodeRelSize={7}

@@ -28,6 +28,8 @@ Clinical-Note-Extraction/
 modules/extend/model/statedict/*
 
 .gitnexus
+.codex
+.impeccable
 *.vscode 
 Note/
 VAR/

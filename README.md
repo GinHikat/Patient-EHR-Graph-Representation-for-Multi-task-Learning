@@ -45,11 +45,10 @@ Our constructed Clinical Knowledge Graph scales across **11.4 Million+ Nodes** a
 
 | Metric | Scale Count | Description |
 | :--- | :---: | :--- |
-| 🌐 **Total Graph Nodes** | **11,469,116** | Combined MIMIC-IV clinical entities & external ontology nodes |
-| 🔗 **Total Graph Edges** | **28,276,419** | Semantic relations connecting admissions, diagnoses, labs & drugs |
-| 🏥 **MIMIC Clinical Nodes** | **11,032,862** | Patient admissions, transfers, lab events, prescriptions |
-| 📚 **External Ontology Nodes** | **238,628** | Disease-disease interactions, drug-drug pathways, phenotypes |
-| 🩺 **ICD Diagnosis Nodes** | **772** | Standardized medical diagnosis classifications |
+| **Total Graph Nodes** | **11,469,116** | Combined MIMIC-IV clinical entities & external ontology nodes |
+| **Total Graph Edges** | **28,276,419** | Semantic relations connecting admissions, diagnoses, labs & drugs |
+| **MIMIC Clinical Nodes** | **11,032,862** | Patient admissions, transfers, lab events, prescriptions |
+| **External Ontology Nodes** | **238,628** | Disease-disease interactions, drug-drug pathways, phenotypes |
 
 </div>
 
@@ -200,7 +199,7 @@ npm run dev
 
 ---
 
-## 🚀 Current Progress & Future Roadmap: Vietnamese EHR Graph Bridge
+## Current Progress & Future Roadmap: Vietnamese EHR Graph Bridge
  **Vietnamese Clinical Entity Extraction**:
   - Processing unstructured Vietnamese clinical notes to extract 5 core entity labels: `CHẨN_ĐOÁN` (Diagnosis), `THUỐC` (Medication), `TÊN_XÉT_NGHIỆM` (Procedure), `TRIỆU_CHỨNG` (Symptom), and `KẾT_QUẢ_XÉT_NGHIỆM` (Lab Result).
   - Fine-tuning **Clinical BERT NER** for entity boundary detection and **SapBERT** for zero-shot cosine similarity linking to international ontologies (**ICD-10** & **RxNorm**).

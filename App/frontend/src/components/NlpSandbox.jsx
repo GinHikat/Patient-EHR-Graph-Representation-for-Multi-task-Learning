@@ -43,26 +43,26 @@ const SAMPLE_NOTES = [
   }
 ];
 
-// Predefined palette for Concept categories and Database Node Types
+// Multiplane Cel Dawn — Celestial Entity Palette
 const TYPE_COLORS = {
-  Patient: "#3b82f6",
-  Admission: "#ec4899",
-  Disease: "#ff2a5f",
-  Diagnosis: "#ffb000",
-  Phenotype: "#ec4899",
-  BodyParts: "#06b6d4",
-  "Body Parts": "#06b6d4",
-  Drugs: "#10b981",
-  Drug: "#10b981",
-  Chemicals: "#34d399",
-  Chemical: "#34d399",
-  Procedures: "#a855f7",
-  Procedure: "#a855f7",
-  Labs: "#6366f1",
-  Lab: "#6366f1",
-  Devices: "#94a3b8",
-  Device: "#94a3b8",
-  Concept: "#a855f7",
+  Patient: "#38bdf8",     /* Dawn Horizon Azure */
+  Admission: "#a78bfa",   /* Twilight Orchid */
+  Disease: "#ff6b6b",     /* Sunrise Coral Red */
+  Diagnosis: "#ff6b6b",   /* Sunrise Coral Red */
+  Phenotype: "#ff6b6b",   /* Sunrise Coral Red */
+  BodyParts: "#34d399",   /* Morning Emerald Leaf */
+  "Body Parts": "#34d399",/* Morning Emerald Leaf */
+  Drugs: "#ffa07a",       /* Golden Sunrise Amber */
+  Drug: "#ffa07a",        /* Golden Sunrise Amber */
+  Chemicals: "#ffa07a",   /* Golden Sunrise Amber */
+  Chemical: "#ffa07a",    /* Golden Sunrise Amber */
+  Procedures: "#8b5cf6",  /* Twilight Violet */
+  Procedure: "#8b5cf6",   /* Twilight Violet */
+  Labs: "#34d399",        /* Morning Emerald Leaf */
+  Lab: "#34d399",         /* Morning Emerald Leaf */
+  Devices: "#94a3b8",     /* Soft Celestial Gray */
+  Device: "#94a3b8",      /* Soft Celestial Gray */
+  Concept: "#a78bfa",     /* Twilight Orchid */
   Outpatient: "#fb923c"
 };
 
@@ -1185,7 +1185,8 @@ function NlpSandbox() {
                     </div>
 
                     <button
-                      className="btn-outline-cyan w-full flex justify-center items-center gap-1 mt-1"
+                      className="btn-outline-cyan w-full flex justify-center items-center gap-1 mt-1 font-mono tracking-wide"
+                      style={{ border: '1px solid var(--accent-color)', boxShadow: '0 0 12px rgba(0, 240, 255, 0.18)' }}
                       onClick={() => handleMapSubgraph(selectedEntity.cui, selectedEntity.codes)}
                     >
                       <Network size={14} />
@@ -1194,7 +1195,8 @@ function NlpSandbox() {
                   </>
                 ) : (
                   <button
-                    className="search-btn w-full flex justify-center items-center gap-1 bg-teal/80 text-black font-semibold"
+                    className="search-btn w-full flex justify-center items-center gap-1 bg-teal/80 text-black font-semibold font-mono tracking-wide"
+                    style={{ border: '1px solid var(--accent-teal)', boxShadow: '0 0 12px rgba(0, 255, 157, 0.25)' }}
                     onClick={handleCreateTag}
                   >
                     <Plus size={14} />
